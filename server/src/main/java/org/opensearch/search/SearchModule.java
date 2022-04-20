@@ -212,6 +212,7 @@ import org.opensearch.search.aggregations.metrics.StatsAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.SumAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.TopHitsAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.ValueCountAggregationBuilder;
+import org.opensearch.search.aggregations.metrics.VectorizedAvgAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.WeightedAvgAggregationBuilder;
 import org.opensearch.search.aggregations.pipeline.AvgBucketPipelineAggregationBuilder;
 import org.opensearch.search.aggregations.pipeline.AvgBucketPipelineAggregator;
@@ -400,6 +401,12 @@ public class SearchModule {
             new AggregationSpec(AvgAggregationBuilder.NAME, AvgAggregationBuilder::new, AvgAggregationBuilder.PARSER).addResultReader(
                 InternalAvg::new
             ).setAggregatorRegistrar(AvgAggregationBuilder::registerAggregators),
+            builder
+        );
+        registerAggregation(
+            new AggregationSpec(VectorizedAvgAggregationBuilder.NAME, VectorizedAvgAggregationBuilder::new, VectorizedAvgAggregationBuilder.PARSER).addResultReader(
+                InternalAvg::new
+            ).setAggregatorRegistrar(VectorizedAvgAggregationBuilder::registerAggregators),
             builder
         );
         registerAggregation(

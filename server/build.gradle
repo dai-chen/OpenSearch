@@ -134,6 +134,22 @@ dependencies {
   // jna
   api "net.java.dev.jna:jna:${versions.jna}"
 
+  // apache arrow
+  api 'org.apache.arrow:arrow-vector:7.0.0'
+  api 'org.apache.arrow:arrow-memory-core:7.0.0'
+  api 'org.apache.arrow:arrow-memory-netty:7.0.0'
+  api 'org.apache.arrow.gandiva:arrow-gandiva:7.0.0'
+
+  api "org.slf4j:slf4j-api:${versions.slf4j}"
+  api "org.slf4j:slf4j-simple:${versions.slf4j}"
+  api 'org.apache.arrow:arrow-format:7.0.0'
+  api 'com.google.flatbuffers:flatbuffers-java:2.0.3'
+  api "io.netty:netty-buffer:${versions.netty}"
+  api "io.netty:netty-common:${versions.netty}"
+  api "com.fasterxml.jackson.core:jackson-databind:${versions.jackson}"
+  api "com.fasterxml.jackson.core:jackson-annotations:${versions.jackson}"
+  api 'com.google.protobuf:protobuf-java:3.19.3'
+
   testImplementation(project(":test:framework")) {
     // tests use the locally compiled version of server
     exclude group: 'org.opensearch', module: 'server'
