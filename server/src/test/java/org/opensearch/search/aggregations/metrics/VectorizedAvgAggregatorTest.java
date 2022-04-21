@@ -38,6 +38,24 @@ public class VectorizedAvgAggregatorTest extends AggregatorTestCase {
         });
     }
 
+    public void testSingleValuedFieldMore() throws IOException {
+        testAggregation(new MatchAllDocsQuery(), iw -> {
+            iw.addDocument(singleton(new NumericDocValuesField("number", 7)));
+            iw.addDocument(singleton(new NumericDocValuesField("number", 2)));
+            iw.addDocument(singleton(new NumericDocValuesField("number", 3)));
+            iw.addDocument(singleton(new NumericDocValuesField("number", 7)));
+            iw.addDocument(singleton(new NumericDocValuesField("number", 2)));
+            iw.addDocument(singleton(new NumericDocValuesField("number", 3)));
+            iw.addDocument(singleton(new NumericDocValuesField("number", 7)));
+            iw.addDocument(singleton(new NumericDocValuesField("number", 2)));
+            iw.addDocument(singleton(new NumericDocValuesField("number", 3)));
+        }, avg -> {
+            assertEquals(4, avg.getValue(), 0);
+            assertTrue(AggregationInspectionHelper.hasValue(avg));
+            assertEquals(4.0, avg.getProperty("value"));
+        });
+    }
+
     private void testAggregation(Query query, CheckedConsumer<RandomIndexWriter, IOException> buildIndex, Consumer<InternalAvg> verify)
         throws IOException {
         MappedFieldType fieldType = new NumberFieldMapper.NumberFieldType("number", NumberFieldMapper.NumberType.INTEGER);

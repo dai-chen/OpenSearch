@@ -12,8 +12,6 @@ import org.apache.arrow.gandiva.evaluator.Projector;
 import org.apache.arrow.gandiva.exceptions.GandivaException;
 import org.apache.arrow.gandiva.expression.TreeBuilder;
 import org.apache.arrow.gandiva.expression.TreeNode;
-import org.apache.arrow.memory.ArrowBuf;
-import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -24,6 +22,8 @@ import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.apache.lucene.index.LeafReaderContext;
+import org.opensearch.common.lease.Releasables;
+import org.opensearch.common.util.ObjectArray;
 import org.opensearch.index.fielddata.SortedNumericDoubleValues;
 import org.opensearch.search.DocValueFormat;
 import org.opensearch.search.aggregations.Aggregator;
@@ -36,7 +36,6 @@ import org.opensearch.search.internal.SearchContext;
 
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -46,8 +45,8 @@ import java.util.Map;
 public class VectorizedAvgAggregator extends NumericMetricsAggregator.SingleValue {
 
     private final ValuesSource.Numeric valuesSource;
-    private final Map<Long, Summary> summaries = new HashMap<>();
     private final DocValueFormat format;
+    private ObjectArray<Summary> summaries;
 
     protected VectorizedAvgAggregator(String name, ValuesSourceConfig valuesSourceConfig,
                                       SearchContext context, Aggregator parent,
@@ -56,11 +55,12 @@ public class VectorizedAvgAggregator extends NumericMetricsAggregator.SingleValu
 
         this.valuesSource = (ValuesSource.Numeric) valuesSourceConfig.getValuesSource();
         this.format = valuesSourceConfig.format();
+        this.summaries = context.bigArrays().newObjectArray(0);
     }
 
     @Override
     public InternalAggregation buildEmptyAggregation() {
-        return null;
+        return new InternalAvg(name, 0.0, 0L, format, metadata());
     }
 
     @Override
@@ -69,15 +69,14 @@ public class VectorizedAvgAggregator extends NumericMetricsAggregator.SingleValu
         return new LeafBucketCollectorBase(sub, values) {
             @Override
             public void collect(int doc, long bucket) throws IOException {
-                Summary summary = VectorizedAvgAggregator.this.summaries.get(bucket);
-                if (summary == null) {
-                    summary = new ArrowVectorSummary();
-                    summaries.put(bucket, summary);
+                if (summaries.size() <= bucket) {
+                    summaries = context.bigArrays().grow(summaries, bucket + 1);
+                    summaries.set(bucket, new ArrowVectorSummary());
                 }
 
                 if (values.advanceExact(doc)) {
                     for (int i = 0; i < values.docValueCount(); i++) {
-                        summary.add(values.nextValue());
+                        summaries.get(bucket).add(values.nextValue());
                     }
                 }
             }
@@ -86,7 +85,7 @@ public class VectorizedAvgAggregator extends NumericMetricsAggregator.SingleValu
 
     @Override
     public InternalAggregation buildAggregation(long owningBucketOrd) throws IOException {
-        if (valuesSource == null || !summaries.containsKey(owningBucketOrd)) {
+        if (valuesSource == null || summaries.size() <= owningBucketOrd) {
             return buildEmptyAggregation();
         }
         Summary summary = summaries.get(owningBucketOrd);
@@ -95,7 +94,7 @@ public class VectorizedAvgAggregator extends NumericMetricsAggregator.SingleValu
 
     @Override
     public double metric(long owningBucketOrd) {
-        if (valuesSource == null || !summaries.containsKey(owningBucketOrd)) {
+        if (valuesSource == null || summaries.size() <= owningBucketOrd) {
             return Double.NaN;
         }
         Summary summary = summaries.get(owningBucketOrd);
@@ -104,61 +103,54 @@ public class VectorizedAvgAggregator extends NumericMetricsAggregator.SingleValu
 
     @Override
     protected void doClose() {
-        summaries.forEach((k, v) -> {
-            try {
-                v.close();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        });
+        Releasables.close(summaries); // close each
     }
 
-    private interface Summary extends AutoCloseable {
+    public interface Summary extends AutoCloseable {
         int count();
         double sum();
         void add(double num);
     }
 
-    private static class ArrowVectorSummary implements Summary {
+    public static class ArrowVectorSummary implements Summary {
         // Reuse 1 allocator
         private static RootAllocator rootAllocator = new RootAllocator(Integer.MAX_VALUE);
         private static Projector projector;
 
-        private static Field fieldA;
-
-        private static Field fieldB;
+        private static Field fieldSum;
+        private static Field fieldNext;
 
         static {
             ArrowType.FloatingPoint doubleType = new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE);
-            fieldA = Field.notNullable("a", doubleType);
-            fieldB = Field.notNullable("b", doubleType);
+            fieldSum = Field.notNullable("sum", doubleType);
+            fieldNext = Field.notNullable("next", doubleType);
             TreeNode add = TreeBuilder.makeFunction("add",
-                Arrays.asList(TreeBuilder.makeField(fieldA), TreeBuilder.makeField(fieldB)),
+                Arrays.asList(TreeBuilder.makeField(fieldSum), TreeBuilder.makeField(fieldNext)),
                 doubleType);
 
-            // Compile project expression a = a + b
+            // Compile project expression sum = sum + next
             try {
-                projector = Projector.make(new Schema(Arrays.asList(fieldA, fieldB)),
-                    List.of(TreeBuilder.makeExpression(add, fieldA)));
+                projector = Projector.make(new Schema(Arrays.asList(fieldSum, fieldNext)),
+                    List.of(TreeBuilder.makeExpression(add, fieldSum)));
             } catch (GandivaException e) {
                 throw new RuntimeException(e);
             }
         }
 
-        private static final int LANE_SIZE = 2;
-        private final Float8Vector vectorA = new Float8Vector(fieldA, rootAllocator);
-        private final Float8Vector vectorB = new Float8Vector(fieldB, rootAllocator);
+        private static final int LANE_SIZE = 16;
+        private final Float8Vector vectorSum = new Float8Vector(fieldSum, rootAllocator);
+        private final Float8Vector vectorNext = new Float8Vector(fieldNext, rootAllocator);
         private int count;
         private int cur;
 
-        ArrowVectorSummary() {
-            vectorA.allocateNew(LANE_SIZE);
-            vectorB.allocateNew(LANE_SIZE);
+        public ArrowVectorSummary() {
+            vectorSum.allocateNew(LANE_SIZE);
+            vectorNext.allocateNew(LANE_SIZE);
 
             for (int i = 0; i < LANE_SIZE; i++) {
-                vectorA.set(i, 0);
+                vectorSum.set(i, 0);
             }
-            vectorA.setValueCount(LANE_SIZE);
+            vectorSum.setValueCount(LANE_SIZE);
         }
 
         @Override
@@ -168,53 +160,53 @@ public class VectorizedAvgAggregator extends NumericMetricsAggregator.SingleValu
 
         @Override
         public double sum() {
-            accumulate();
+            accumulateNextToSum();
 
             int sum = 0;
-            for (int i = 0; i < vectorA.getValueCount(); i++) {
-                sum += vectorA.get(i);
+            for (int i = 0; i < vectorSum.getValueCount(); i++) {
+                sum += vectorSum.get(i);
             }
             return sum;
         }
 
         @Override
         public void add(double num) {
-            vectorB.set(cur++, num);
+            vectorNext.set(cur++, num);
 
             if (cur == LANE_SIZE) {
-                accumulate();
+                accumulateNextToSum();
             }
         }
 
-        private void accumulate() {
+        private void accumulateNextToSum() {
             if (cur == 0) {
                 return;
             }
 
             for (int i = cur; i < LANE_SIZE; i++) { // use mask?
-                vectorB.set(i, 0);
+                vectorNext.set(i, 0);
             }
-            vectorB.setValueCount(LANE_SIZE);
+            vectorNext.setValueCount(LANE_SIZE);
 
-            VectorSchemaRoot vectorSchemaRoot = new VectorSchemaRoot(Arrays.asList(fieldA, fieldB), Arrays.asList(vectorA, vectorB));
+            VectorSchemaRoot vectorSchemaRoot = new VectorSchemaRoot(Arrays.asList(fieldSum, fieldNext), Arrays.asList(vectorSum, vectorNext));
             VectorUnloader unloader = new VectorUnloader(vectorSchemaRoot);
             ArrowRecordBatch recordBatch = unloader.getRecordBatch();
             try {
-                projector.evaluate(recordBatch, List.of(vectorA));
+                projector.evaluate(recordBatch, List.of(vectorSum));
             } catch (GandivaException e) {
                 throw new RuntimeException(e);
             }
 
             count += cur;
             cur = 0;
-            vectorB.allocateNew(LANE_SIZE); // reset() not work
+            vectorNext.allocateNew(LANE_SIZE); // reset() not work
         }
 
         @Override
         public void close() throws Exception {
-            vectorB.close();
-            vectorA.close();
-            projector.close();
+            vectorNext.close();
+            vectorSum.close();
+            // projector.close();
             // rootAllocator.close(); // how to release buffer ledger???
         }
     }
