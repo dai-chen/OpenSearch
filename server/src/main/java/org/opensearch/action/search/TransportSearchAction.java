@@ -1125,7 +1125,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         SearchResponse.Clusters clusters
     ) {
         if (preFilter) {
-            return new CanMatchPreFilterSearchPhase(
+            //return new CanMatchPreFilterSearchPhase(
+            return new FlintSkippingIndexQueryPhase(
                 logger,
                 searchTransportService,
                 connectionLookup,
