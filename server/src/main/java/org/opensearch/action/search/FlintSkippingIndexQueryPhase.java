@@ -108,7 +108,7 @@ class FlintSkippingIndexQueryPhase extends AbstractSearchAsyncAction<SearchPhase
                 getShardIdFromSkippingIndex(skippingIndexQuery, new SkippingIndexResponseListener() {
                     @Override
                     public void onResponse(SearchResponse searchResponse) {
-                        Set<Integer> shardIds = parseShardIdFromSearchResponse(searchResponse);
+                        Set<Integer> shardIds = parseShardIdsInResponse(searchResponse);
                         markSkippedShards(shardIds);
                         executeNextPhase();
                     }
@@ -151,13 +151,16 @@ class FlintSkippingIndexQueryPhase extends AbstractSearchAsyncAction<SearchPhase
     private List<String> getIndexedColumnsFromMetadata() {
         IndexMetadata indexMetadata = clusterState.metadata().index(skippingIndexName());
         Map<String, Object> meta = (Map<String, Object>) indexMetadata.mapping().sourceAsMap().get("_meta");
-        return (List<String>) meta.get("indexedColumns");
+
+        List<String> indexedColumns = (List<String>) meta.get("indexedColumns");
+        System.out.println("Skipping index exists with indexed columns: " + indexedColumns);
+        return indexedColumns;
     }
 
     // Traverse query plan tree to collect filtering conditions that can be pushed down
     private QueryBuilder pushDownFilterToSkippingIndex(List<String> indexedColumns) {
         QueryBuilder sourceQuery = getRequest().source().query();
-        QueryBuilder skippingIndexQuery = doTraverseSourceQuery(sourceQuery, new HashSet<>(indexedColumns));
+        QueryBuilder skippingIndexQuery = doTraverse(sourceQuery, new HashSet<>(indexedColumns));
 
         if (skippingIndexQuery != null) {
             System.out.println("Push down query: " + skippingIndexQuery);
@@ -165,7 +168,7 @@ class FlintSkippingIndexQueryPhase extends AbstractSearchAsyncAction<SearchPhase
         return skippingIndexQuery;
     }
 
-    private QueryBuilder doTraverseSourceQuery(QueryBuilder sourceQuery, Set<String> indexedColumns) {
+    private QueryBuilder doTraverse(QueryBuilder sourceQuery, Set<String> indexedColumns) {
         if (sourceQuery instanceof TermQueryBuilder) {
             TermQueryBuilder filter = (TermQueryBuilder) sourceQuery;
             if (indexedColumns.contains(filter.fieldName())) {
@@ -178,7 +181,7 @@ class FlintSkippingIndexQueryPhase extends AbstractSearchAsyncAction<SearchPhase
             BoolQueryBuilder indexQuery = QueryBuilders.boolQuery();
 
             for (QueryBuilder childQuery : boolQuery.must()) {
-                QueryBuilder newChildQuery = doTraverseSourceQuery(childQuery, indexedColumns);
+                QueryBuilder newChildQuery = doTraverse(childQuery, indexedColumns);
                 if (newChildQuery != null) {
                     indexQuery.must(newChildQuery);
                 }
@@ -199,7 +202,7 @@ class FlintSkippingIndexQueryPhase extends AbstractSearchAsyncAction<SearchPhase
         client.search(indexRequest, listener);
     }
 
-    private Set<Integer> parseShardIdFromSearchResponse(SearchResponse searchResponse) {
+    private Set<Integer> parseShardIdsInResponse(SearchResponse searchResponse) {
         Set<Integer> shardIds = new HashSet<>();
         SearchHit[] searchHits = searchResponse.getHits().getHits();
         for (SearchHit hit : searchHits) {
