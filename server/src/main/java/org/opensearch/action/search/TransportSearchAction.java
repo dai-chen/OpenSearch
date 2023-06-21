@@ -1164,7 +1164,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                         }
                     };
                 },
-                clusters
+                clusters,
+                client
             );
         } else {
             final QueryPhaseResultConsumer queryResultConsumer = searchPhaseController.newSearchPhaseResults(
