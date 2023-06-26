@@ -142,4 +142,4 @@ ${path.logs}
 node.roles: [ master, data, search ]
 node.search.cache.size: 512mb
 
-path.repo: /Users/daichen/Downloads/flintsnapshot
+path.repo: /Users/daichen/tmp/opensearch
