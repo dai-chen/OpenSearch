@@ -1,0 +1,30 @@
+# Codebase Patterns
+(Patterns discovered during implementation will be consolidated here)
+
+## Known Patterns from Design Phase
+- OpenSearch modules live in `modules/<name>/` with `build.gradle` using `opensearchplugin {}` block
+- Modules are registered in root `settings.gradle` via `addSubProjects` or similar
+- REST handlers extend `BaseRestHandler`, override `routes()` and `prepareRequest()`
+- Plugin classes implement `ActionPlugin` and register handlers via `getRestHandlers()`
+- Reference modules: `modules/reindex/`, `modules/lang-painless/` for build.gradle patterns
+- The unified-query-api Maven coordinates: `org.opensearch.query:unified-query-api` (check `sandbox/plugins/analytics-engine/build.gradle` for exact repo URL and version)
+- The IT pattern for unified query: `UnifiedQueryPlanner.plan()` → `UnifiedQueryCompiler.compile()` → `PreparedStatement.executeQuery()` → `ResultSet`
+- Schema is built as a lazy `AbstractSchema` that creates `OpenSearchIndex(osClient, settings, indexName)` on demand
+- Use `OpenSearchNodeClient` (not REST client) since the module runs in-process
+- OpenSearch jar hell checker will reject duplicate classes — resolve via exclusions and resolutionStrategy.force
+- Integration tests go in `src/internalClusterTest/java/`, class names end with "IT", extend `OpenSearchIntegTestCase`
+
+## GUARDRAILS — DO NOT VIOLATE
+- ONLY modify files inside `modules/query-languages/` (exception: `settings.gradle` for module registration in US-001 only)
+- Do NOT modify any existing module, plugin, or server code
+- Do NOT modify `sandbox/plugins/analytics-engine/` — it is unrelated to this work
+- Do NOT add dependencies to the root build.gradle or any other module's build.gradle
+- Do NOT delete or modify any existing tests
+- Keep the implementation minimal — this is a PoC, not production code
+- Use hardcoded default settings, not configurable plugin settings
+- No explain support, no cursor/pagination, no async query
+- If jar conflicts arise, resolve via exclusions/force in THIS module's build.gradle only
+
+# Iteration Log
+
+<!-- Round summaries and human intervention notes will be appended here automatically -->

@@ -1,0 +1,109 @@
+{
+  "project": "SQL/PPL to OpenSearch Core PoC",
+  "branchName": "ralph/sql-ppl-core-poc",
+  "description": "Prove that SQL/PPL can be a first-class query language in OpenSearch core by creating a new module (modules/query-languages/) that registers _sql and _ppl REST endpoints, uses the unified-query-api to parse and compile queries, and leverages OpenSearchIndex from the opensearch-project/sql opensearch module to execute against OpenSearch natively.",
+  "buildCommand": "./gradlew :modules:query-languages:build",
+  "testCommand": "./gradlew :modules:query-languages:test",
+  "verifyCommand": "./gradlew :modules:query-languages:internalClusterTest",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Create module skeleton with build.gradle and plugin class",
+      "description": "As a developer, I want the modules/query-languages/ directory structure with a working build.gradle and empty plugin class so that the module compiles and is recognized by OpenSearch.",
+      "acceptanceCriteria": [
+        "Directory modules/query-languages/ exists with src/main/java and src/test/java",
+        "build.gradle declares opensearchplugin with name 'query-languages' and classname pointing to the plugin class",
+        "build.gradle adds unified-query-api as implementation dependency from ci.opensearch.org snapshots maven repo (group: org.opensearch.query, version matching opensearch_version property or 3.6.0.0-SNAPSHOT)",
+        "settings.gradle at repo root includes the new module (add 'modules:query-languages' to the addSubProjects call or equivalent)",
+        "Plugin class extends org.opensearch.plugins.Plugin and implements ActionPlugin with empty getRestHandlers() and getActions()",
+        "Jar conflicts resolved via resolutionStrategy.force and/or dependency exclusions — check what unified-query-api pulls transitively vs what server already provides",
+        "./gradlew :modules:query-languages:build passes with exit code 0",
+        "No existing files outside modules/query-languages/ are modified EXCEPT settings.gradle (to register the module)"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "Reference existing modules like modules/reindex/ or modules/lang-painless/ for build.gradle patterns. The unified-query-api artifact is published to https://ci.opensearch.org/ci/dbc/integ-test/ or the OpenSearch snapshots repo. Check sandbox/plugins/analytics-engine/build.gradle for the exact maven repo URL and artifact coordinates (org.opensearch.query:unified-query-api, unified-query-core, unified-query-ppl). Jar hell is the main risk — OpenSearch checks for duplicate classes across the classpath."
+    },
+    {
+      "id": "US-002",
+      "title": "Copy minimal OpenSearchIndex and dependencies from sql repo opensearch module",
+      "description": "As a developer, I want the OpenSearchIndex Calcite Table implementation and its minimal dependency chain copied into the module so that queries can be compiled and executed against OpenSearch indices.",
+      "acceptanceCriteria": [
+        "OpenSearchIndex class (Calcite Table implementation) is present in the module under an appropriate package",
+        "Minimal dependency chain is included: OpenSearchClient, OpenSearchNodeClient, index mapping classes, request builders, response parsers needed by OpenSearchIndex",
+        "All DataSourceService and StorageEngine coupling is removed — these classes should NOT reference DataSourceService or StorageEngine interfaces",
+        "Code compiles cleanly with no references to sql repo's core module abstractions (ExprValue, StorageEngine, DataSourceService etc.) unless they come via unified-query-api",
+        "./gradlew :modules:query-languages:build passes",
+        "Only files inside modules/query-languages/ are added or modified"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "Source: https://github.com/opensearch-project/sql/tree/main/opensearch/src/main/java/org/opensearch/sql/opensearch — only copy what OpenSearchIndex needs for the Calcite Table contract (getRowType, scan/enumerable). The IT at https://github.com/opensearch-project/sql/blob/main/integ-test/src/test/java/org/opensearch/sql/api/UnifiedQueryOpenSearchIT.java shows the minimal surface: OpenSearchIndex(osClient, settings, indexName). Strip everything else. Do NOT copy the entire opensearch module — only the classes reachable from OpenSearchIndex's Calcite Table implementation."
+    },
+    {
+      "id": "US-003",
+      "title": "Add _ppl REST endpoint with transport action",
+      "description": "As a developer, I want a POST /_ppl REST endpoint that accepts a PPL query string and executes it via the unified query API pipeline, returning results as JSON.",
+      "acceptanceCriteria": [
+        "RestPplAction extends BaseRestHandler and registers route POST /_ppl",
+        "Request body is JSON with a 'query' field containing the PPL string",
+        "Transport action orchestrates: build AbstractSchema from cluster state → UnifiedQueryContext (language=PPL) → UnifiedQueryPlanner.plan() → UnifiedQueryCompiler.compile() → PreparedStatement.executeQuery() → format ResultSet as JSON response",
+        "Schema builder creates a lazy AbstractSchema that instantiates OpenSearchIndex on demand (same pattern as UnifiedQueryOpenSearchIT.createOpenSearchSchema())",
+        "Plugin class registers the REST handler and transport action",
+        "./gradlew :modules:query-languages:build passes",
+        "Only files inside modules/query-languages/ are modified"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "Reference the UnifiedQueryOpenSearchIT for the exact pipeline: UnifiedQueryPlanner → UnifiedQueryCompiler → PreparedStatement → ResultSet. Use hardcoded default settings for the PoC (size_limit=200, calcite.enabled=true, calcite.pushdown.enabled=true, etc.). The response format can be simple JSON — no need for JDBC format. Use OpenSearchNodeClient (not REST client) since we're running in-process as a module."
+    },
+    {
+      "id": "US-004",
+      "title": "Add _sql REST endpoint",
+      "description": "As a developer, I want a POST /_sql REST endpoint that accepts a SQL query string and executes it via the unified query API pipeline.",
+      "acceptanceCriteria": [
+        "RestSqlAction extends BaseRestHandler and registers route POST /_sql",
+        "Request body is JSON with a 'query' field containing the SQL string",
+        "Reuses the same transport action as PPL but with QueryType.SQL",
+        "Plugin class registers the REST handler",
+        "./gradlew :modules:query-languages:build passes",
+        "Only files inside modules/query-languages/ are modified"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "This should be very similar to the PPL endpoint — same transport action, just different QueryType. The UnifiedQueryPlanner handles both SQL and PPL based on the QueryType in UnifiedQueryContext."
+    },
+    {
+      "id": "US-005",
+      "title": "Add PPL integration test",
+      "description": "As a developer, I want an integration test that sends a PPL query via POST /_ppl and verifies correct results are returned.",
+      "acceptanceCriteria": [
+        "IT class extends OpenSearchIntegTestCase or OpenSearchSingleNodeTestCase",
+        "Test indexes sample documents, sends POST /_ppl with a query like 'source = <index> | fields <field1>, <field2> | where <field> > <value>'",
+        "Test verifies the response contains correct data",
+        "Test class name ends with 'IT'",
+        "./gradlew :modules:query-languages:internalClusterTest passes",
+        "Only files inside modules/query-languages/ are modified"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Place in src/internalClusterTest/java/. Use OpenSearchIntegTestCase as base. Index a few simple documents, query via REST client, assert response. Keep it minimal — just prove the pipeline works end-to-end. Reference existing ITs in the repo for patterns (e.g., modules/reindex/src/internalClusterTest/)."
+    },
+    {
+      "id": "US-006",
+      "title": "Add SQL integration test",
+      "description": "As a developer, I want an integration test that sends a SQL query via POST /_sql and verifies correct results are returned.",
+      "acceptanceCriteria": [
+        "IT class (can be same class as PPL IT or separate) has a test method for SQL",
+        "Test indexes sample documents, sends POST /_sql with a query like 'SELECT <field1>, <field2> FROM <index> WHERE <field> > <value>'",
+        "Test verifies the response contains correct data",
+        "Test class name ends with 'IT'",
+        "./gradlew :modules:query-languages:internalClusterTest passes",
+        "Only files inside modules/query-languages/ are modified"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "Can be in the same IT class as the PPL test. Same pattern — index docs, query via REST, assert. Keep minimal."
+    }
+  ]
+}
