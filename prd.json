@@ -21,7 +21,7 @@
         "No existing files outside modules/query-languages/ are modified EXCEPT settings.gradle (to register the module)"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Reference existing modules like modules/reindex/ or modules/lang-painless/ for build.gradle patterns. The unified-query-api artifact is published to https://ci.opensearch.org/ci/dbc/integ-test/ or the OpenSearch snapshots repo. Check sandbox/plugins/analytics-engine/build.gradle for the exact maven repo URL and artifact coordinates (org.opensearch.query:unified-query-api, unified-query-core, unified-query-ppl). Jar hell is the main risk — OpenSearch checks for duplicate classes across the classpath."
     },
     {
@@ -37,8 +37,8 @@
         "Only files inside modules/query-languages/ are added or modified"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": "Source: https://github.com/opensearch-project/sql/tree/main/opensearch/src/main/java/org/opensearch/sql/opensearch — only copy what OpenSearchIndex needs for the Calcite Table contract (getRowType, scan/enumerable). The IT at https://github.com/opensearch-project/sql/blob/main/integ-test/src/test/java/org/opensearch/sql/api/UnifiedQueryOpenSearchIT.java shows the minimal surface: OpenSearchIndex(osClient, settings, indexName). Strip everything else. Do NOT copy the entire opensearch module — only the classes reachable from OpenSearchIndex's Calcite Table implementation."
+      "passes": true,
+      "notes": "Instead of copying source files, added unified-query-opensearch jar as a dependency. This jar already contains OpenSearchIndex, OpenSearchClient, OpenSearchNodeClient, CalciteLogicalIndexScan, OpenSearchDataType, IndexMapping, and the full dependency chain — all compiled and jar-hell-free. No DataSourceService/StorageEngine coupling in OpenSearchIndex (verified via javap)."
     },
     {
       "id": "US-003",

@@ -14,6 +14,24 @@
 - OpenSearch jar hell checker will reject duplicate classes — resolve via exclusions and resolutionStrategy.force
 - Integration tests go in `src/internalClusterTest/java/`, class names end with "IT", extend `OpenSearchIntegTestCase`
 
+## Discovered Patterns (US-001)
+- `settings.gradle` auto-discovers modules — just create `build.gradle` in `modules/<name>/`, no settings.gradle edit needed
+
+## Discovered Patterns (US-002)
+- `unified-query-opensearch` jar (org.opensearch.query:unified-query-opensearch) contains the full opensearch module: OpenSearchIndex, OpenSearchNodeClient, CalciteLogicalIndexScan, OpenSearchDataType, etc.
+- No need to copy source files from the sql repo — just add the jar as a dependency with appropriate exclusions
+- Constructor pattern: `new OpenSearchIndex(new OpenSearchNodeClient(nodeClient), settings, indexName)`
+- Schema pattern: lazy `AbstractSchema` with `getTableMap()` returning `OpenSearchIndex` on demand, passed to `UnifiedQueryContext.builder().catalog(name, schema)`
+- Guava forbidden on compile classpaths — use custom `calciteCompile` configuration, add to sourceSets manually
+- Per-dependency exclusions for server-provided deps (jackson, log4j, slf4j, etc.) — NOT global `configurations.all` excludes (breaks test framework)
+- `forbiddenApisMain` needs all referenced classes on compile classpath — exclude server deps from runtime only, not compile
+- `thirdPartyAudit.ignoreMissingClasses()` for server-provided classes, `ignoreViolations()` for guava Unsafe
+- `dependencyLicenses { mapping from: /pattern/, to: 'name' }` groups jars under shared LICENSE/NOTICE
+- `./gradlew :modules:query-languages:updateShas` auto-generates `.jar.sha1` files
+- `testingConventions` requires at least one test in both `test` and `internalClusterTest` source sets
+- All public classes/methods need javadoc with `@param` tags (enforced by `missingJavadoc`)
+- Package needs `package-info.java` with javadoc
+
 ## GUARDRAILS — DO NOT VIOLATE
 - ONLY modify files inside `modules/query-languages/` (exception: `settings.gradle` for module registration in US-001 only)
 - Do NOT modify any existing module, plugin, or server code
@@ -28,3 +46,46 @@
 # Iteration Log
 
 <!-- Round summaries and human intervention notes will be appended here automatically -->
+
+## 2026-03-21T01:15 - US-001
+- Created `modules/query-languages/` module skeleton with build.gradle, plugin class, and tests
+- Files changed:
+  - `modules/query-languages/build.gradle` — opensearchplugin config, unified-query-api/core/ppl deps, calcite, guava, janino
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/QueryLanguagesPlugin.java` — Plugin + ActionPlugin with empty getRestHandlers/getActions
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/package-info.java`
+  - `modules/query-languages/src/test/java/org/opensearch/querylanguages/QueryLanguagesPluginTests.java` — unit test
+  - `modules/query-languages/src/internalClusterTest/java/org/opensearch/querylanguages/QueryLanguagesPluginIT.java` — integration test
+  - `modules/query-languages/licenses/` — LICENSE, NOTICE, and SHA1 files for all bundled deps
+- **Learnings for future iterations:**
+  - `settings.gradle` auto-discovers modules via `addSubProjects` scanning for `build.gradle` — no need to modify it
+  - Guava is forbidden on compile/test compile classpaths by `gradle/forbidden-dependencies.gradle` — use a custom `calciteCompile` configuration and add to sourceSets manually
+  - Exclusions for server-provided deps (jackson, log4j, slf4j, etc.) must be per-dependency, NOT global `configurations.all` — global exclusions break test framework which also needs those deps
+  - `forbiddenApisMain` task needs all referenced classes on compile classpath (log4j, joda-time, etc.) — don't exclude from compile, only from runtime via per-dependency excludes
+  - `thirdPartyAudit` requires `ignoreMissingClasses` for server-provided classes and `ignoreViolations` for guava Unsafe usage
+  - `dependencyLicenses` mapping groups multiple jars under one LICENSE/NOTICE (e.g., `mapping from: /unified-query-.*/, to: 'unified-query'`)
+  - `updateShas` task auto-generates `.jar.sha1` files
+  - `testingConventions` requires at least one test class in both `test` and `internalClusterTest` source sets
+  - All public classes and methods need javadoc with `@param` tags — enforced by `missingJavadoc` task
+  - Package needs `package-info.java` with javadoc
+---
+
+## 2026-03-21T01:20 - US-002
+- Added `unified-query-opensearch` jar as dependency instead of copying source files
+- This jar (org.opensearch.query:unified-query-opensearch:3.6.0.0-SNAPSHOT) already contains:
+  - OpenSearchIndex (Calcite Table implementation extending AbstractOpenSearchTable)
+  - OpenSearchClient interface and OpenSearchNodeClient implementation
+  - CalciteLogicalIndexScan, AbstractCalciteIndexScan (for toRel())
+  - OpenSearchDataType, IndexMapping, OpenSearchDescribeIndexRequest (for getFieldTypes())
+  - OpenSearchRequestBuilder, OpenSearchResponse, scan operators, pushdown rules
+  - No DataSourceService/StorageEngine coupling (verified via javap)
+- Files changed:
+  - `modules/query-languages/build.gradle` — added unified-query-opensearch dependency with exclusions
+  - `modules/query-languages/licenses/unified-query-opensearch-3.6.0.0-SNAPSHOT.jar.sha1` — SHA for new jar
+- All checks pass: build, test, internalClusterTest, jarHell, thirdPartyAudit, dependencyLicenses
+- **Learnings for future iterations:**
+  - The `unified-query-opensearch` jar exists at `org.opensearch.query:unified-query-opensearch` and contains the entire opensearch module from the sql repo — no need to copy source files
+  - It depends on `org.opensearch:opensearch` (server) which must be excluded since it's provided by the module framework
+  - It also has runtime deps on `opensearch-ml-client`, `geospatial-client`, `resilience4j-retry`, `org.json:json` — all excluded since they're not needed for the PoC
+  - The existing `unified-query` license/notice mapping (`mapping from: /unified-query-.*/, to: 'unified-query'`) automatically covers the new jar
+  - For US-003/004: Use `OpenSearchIndex(new OpenSearchNodeClient(nodeClient), settings, indexName)` to create tables, and pass a lazy AbstractSchema to `UnifiedQueryContext.builder().catalog(name, schema)`
+---
