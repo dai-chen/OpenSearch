@@ -46,6 +46,12 @@
 - `CALCITE_PUSHDOWN_ROWCOUNT_ESTIMATION_FACTOR` (Double) must be in HardcodedSettings
 - Integration tests can use transport client directly: `client().execute(QueryLanguageAction.INSTANCE, request).actionGet()`
 
+## Discovered Patterns (US-006)
+- `UnifiedQueryPlanner.buildQueryParser()` only supports PPL — for SQL, use Calcite's native `Frameworks.getPlanner(config)` → parse → validate → rel
+- Calcite's default SQL parser uppercases unquoted identifiers — use `Lex.JAVA` for case-insensitive matching
+- `Frameworks.newConfigBuilder(baseConfig)` can override parser config from existing FrameworkConfig
+- `UnifiedQueryCompiler.compile()` accepts any RelNode regardless of source (PPL or Calcite SQL planner)
+
 ## GUARDRAILS — DO NOT VIOLATE
 - ONLY modify files inside `modules/query-languages/` (exception: `settings.gradle` for module registration in US-001 only)
 - Do NOT modify any existing module, plugin, or server code
@@ -159,4 +165,20 @@
   - The unified-query-opensearch code requires a `sql_background_io` thread pool — register via `getExecutorBuilders()` with `ScalingExecutorBuilder`
   - `CALCITE_PUSHDOWN_ROWCOUNT_ESTIMATION_FACTOR` must be in HardcodedSettings (Double type) — used by `AbstractCalciteIndexScan.computeSelfCost()`
   - Integration tests use transport client directly (`client().execute(ActionType, Request)`) — simpler than REST client which requires Netty4 test case
+---
+
+## 2026-03-21T02:02 - US-006
+- Implemented SQL integration test (QueryLanguagesSqlIT) that indexes 3 documents, runs `SELECT name, age FROM test_sql WHERE age > 21`, and verifies 2 rows returned
+- Fixed SQL support in TransportQueryLanguageAction: `UnifiedQueryPlanner.buildQueryParser()` only supports PPL, so SQL uses Calcite's native `Planner` to parse → validate → convert to RelNode
+- Used `Lex.JAVA` parser config for case-insensitive identifiers (Calcite defaults to uppercasing unquoted identifiers)
+- Files changed:
+  - `modules/query-languages/src/internalClusterTest/java/org/opensearch/querylanguages/QueryLanguagesSqlIT.java` — new IT class
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/TransportQueryLanguageAction.java` — added SQL branch using Calcite Planner, PPL branch unchanged
+- All checks pass: build, test, internalClusterTest
+- **Learnings for future iterations:**
+  - `UnifiedQueryPlanner.buildQueryParser()` only supports `QueryType.PPL` — throws `IllegalArgumentException` for SQL
+  - For SQL, use Calcite's native `Frameworks.getPlanner(config)` → `parse()` → `validate()` → `rel()` to get a RelNode
+  - Calcite's default SQL parser uppercases unquoted identifiers — use `Lex.JAVA` in `SqlParser.config()` for case-insensitive matching
+  - `FrameworkConfig` from `CalcitePlanContext.config` can be rebuilt via `Frameworks.newConfigBuilder(baseConfig)` to override parser config
+  - The `UnifiedQueryCompiler.compile()` works with any RelNode regardless of source (PPL planner or Calcite SQL planner)
 ---

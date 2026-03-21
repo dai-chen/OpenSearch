@@ -102,8 +102,8 @@
         "Only files inside modules/query-languages/ are modified"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": "Can be in the same IT class as the PPL test. Same pattern — index docs, query via REST, assert. Keep minimal."
+      "passes": true,
+      "notes": "UnifiedQueryPlanner only supports PPL (buildQueryParser throws for SQL). SQL uses Calcite's native Planner: parse → validate → rel(). Lex.JAVA needed for case-insensitive identifiers. FrameworkConfig rebuilt from CalcitePlanContext.config with overridden parserConfig."
     }
   ]
 }
