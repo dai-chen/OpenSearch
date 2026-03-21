@@ -32,6 +32,12 @@
 - All public classes/methods need javadoc with `@param` tags (enforced by `missingJavadoc`)
 - Package needs `package-info.java` with javadoc
 
+## Discovered Patterns (US-003)
+- Action names MUST use valid prefixes: `indices:data/read/`, `indices:data/write/`, `cluster:admin/`, `cluster:monitor/`, `indices:admin/`, `indices:monitor/`, `internal:`, `indices:internal/`, `cluster:internal/`, `views:` — anything else (e.g. `cluster:data/`) is rejected by the test framework
+- Transport action is reusable for SQL and PPL — differentiated by `QueryType` enum in the request
+- `HardcodedSettings` extends `org.opensearch.sql.common.setting.Settings` for PoC defaults
+- Constructor javadoc required even for no-arg constructors on public classes
+
 ## GUARDRAILS — DO NOT VIOLATE
 - ONLY modify files inside `modules/query-languages/` (exception: `settings.gradle` for module registration in US-001 only)
 - Do NOT modify any existing module, plugin, or server code
@@ -88,4 +94,24 @@
   - It also has runtime deps on `opensearch-ml-client`, `geospatial-client`, `resilience4j-retry`, `org.json:json` — all excluded since they're not needed for the PoC
   - The existing `unified-query` license/notice mapping (`mapping from: /unified-query-.*/, to: 'unified-query'`) automatically covers the new jar
   - For US-003/004: Use `OpenSearchIndex(new OpenSearchNodeClient(nodeClient), settings, indexName)` to create tables, and pass a lazy AbstractSchema to `UnifiedQueryContext.builder().catalog(name, schema)`
+---
+
+## 2026-03-21T01:35 - US-003
+- Implemented POST /_ppl REST endpoint with transport action and unified query pipeline
+- Files changed:
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/QueryLanguageAction.java` — ActionType singleton with name `indices:data/read/query_language`
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/QueryLanguageRequest.java` — ActionRequest with query string and QueryType
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/QueryLanguageResponse.java` — ActionResponse with schema/datarows JSON format, implements ToXContentObject
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/TransportQueryLanguageAction.java` — HandledTransportAction orchestrating: OpenSearchNodeClient → lazy AbstractSchema → UnifiedQueryContext → UnifiedQueryPlanner.plan() → UnifiedQueryCompiler.compile() → PreparedStatement.executeQuery() → ResultSet → response
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/RestPplAction.java` — BaseRestHandler for POST /_ppl, parses JSON body with 'query' field, delegates to transport action
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/QueryLanguagesPlugin.java` — Updated to register RestPplAction and TransportQueryLanguageAction
+  - `modules/query-languages/src/test/java/org/opensearch/querylanguages/QueryLanguagesPluginTests.java` — Updated assertions for 1 handler and 1 action
+- **Learnings for future iterations:**
+  - Action names MUST start with a valid prefix: `cluster:admin`, `indices:data/read`, `indices:data/write`, `indices:monitor`, `indices:admin`, `cluster:monitor`, `cluster:internal`, `internal:`, `indices:internal`, `views:` — `cluster:data/...` is NOT valid
+  - The transport action is reusable for both SQL and PPL — just pass different `QueryType` enum value
+  - `HardcodedSettings` extends `org.opensearch.sql.common.setting.Settings` (not OpenSearch's Settings) — provides PoC defaults for CALCITE_ENGINE_ENABLED, CALCITE_PUSHDOWN_ENABLED, QUERY_SIZE_LIMIT, etc.
+  - `UnifiedQueryContext.Builder.setting(key, value)` accepts string keys for additional settings beyond what the Settings object provides
+  - Schema is built lazily via `AbstractSchema.getTableMap()` — iterates `osClient.indices()` and creates `OpenSearchIndex(osClient, settings, indexName)` for each
+  - `RestToXContentListener` handles serializing `ToXContentObject` responses to the REST channel
+  - Constructor javadoc is required even for no-arg constructors on public classes
 ---

@@ -54,8 +54,8 @@
         "Only files inside modules/query-languages/ are modified"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": "Reference the UnifiedQueryOpenSearchIT for the exact pipeline: UnifiedQueryPlanner → UnifiedQueryCompiler → PreparedStatement → ResultSet. Use hardcoded default settings for the PoC (size_limit=200, calcite.enabled=true, calcite.pushdown.enabled=true, etc.). The response format can be simple JSON — no need for JDBC format. Use OpenSearchNodeClient (not REST client) since we're running in-process as a module."
+      "passes": true,
+      "notes": "Implemented with TransportQueryLanguageAction (HandledTransportAction), QueryLanguageRequest/Response, RestPplAction. Action name must use valid prefix (indices:data/read/...). HardcodedSettings inner class provides PoC defaults. Schema built lazily from osClient.indices(). Pipeline: UnifiedQueryPlanner.plan() → UnifiedQueryCompiler.compile() → PreparedStatement.executeQuery() → ResultSet → JSON response."
     },
     {
       "id": "US-004",

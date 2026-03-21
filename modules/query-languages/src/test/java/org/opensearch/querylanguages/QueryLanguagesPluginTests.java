@@ -19,7 +19,7 @@ public class QueryLanguagesPluginTests extends OpenSearchTestCase {
     public void testPluginCreation() throws IOException {
         try (QueryLanguagesPlugin plugin = new QueryLanguagesPlugin()) {
             assertNotNull(plugin);
-            assertEquals(1, plugin.getRestHandlers(null, null, null, null, null, null, null).size());
+            assertEquals(2, plugin.getRestHandlers(null, null, null, null, null, null, null).size());
             assertEquals(1, plugin.getActions().size());
         }
     }
