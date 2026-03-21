@@ -15,12 +15,12 @@ import java.io.IOException;
 /** Basic tests for {@link QueryLanguagesPlugin}. */
 public class QueryLanguagesPluginTests extends OpenSearchTestCase {
 
-    /** Verify plugin can be instantiated. */
+    /** Verify plugin can be instantiated and registers handlers. */
     public void testPluginCreation() throws IOException {
         try (QueryLanguagesPlugin plugin = new QueryLanguagesPlugin()) {
             assertNotNull(plugin);
-            assertTrue(plugin.getRestHandlers(null, null, null, null, null, null, null).isEmpty());
-            assertTrue(plugin.getActions().isEmpty());
+            assertEquals(1, plugin.getRestHandlers(null, null, null, null, null, null, null).size());
+            assertEquals(1, plugin.getActions().size());
         }
     }
 }

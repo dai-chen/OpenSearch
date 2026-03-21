@@ -57,7 +57,7 @@ public class QueryLanguagesPlugin extends Plugin implements ActionPlugin {
         IndexNameExpressionResolver indexNameExpressionResolver,
         Supplier<DiscoveryNodes> nodesInCluster
     ) {
-        return Collections.emptyList();
+        return Collections.singletonList(new RestPplAction());
     }
 
     /**
@@ -67,6 +67,6 @@ public class QueryLanguagesPlugin extends Plugin implements ActionPlugin {
      */
     @Override
     public List<ActionHandler<? extends ActionRequest, ? extends ActionResponse>> getActions() {
-        return Collections.emptyList();
+        return Collections.singletonList(new ActionHandler<>(QueryLanguageAction.INSTANCE, TransportQueryLanguageAction.class));
     }
 }
