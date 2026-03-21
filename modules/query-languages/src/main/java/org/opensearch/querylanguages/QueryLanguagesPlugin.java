@@ -20,6 +20,8 @@ import org.opensearch.plugins.ActionPlugin;
 import org.opensearch.plugins.Plugin;
 import org.opensearch.rest.RestController;
 import org.opensearch.rest.RestHandler;
+import org.opensearch.threadpool.ExecutorBuilder;
+import org.opensearch.threadpool.ScalingExecutorBuilder;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -69,5 +71,18 @@ public class QueryLanguagesPlugin extends Plugin implements ActionPlugin {
     @Override
     public List<ActionHandler<? extends ActionRequest, ? extends ActionResponse>> getActions() {
         return Collections.singletonList(new ActionHandler<>(QueryLanguageAction.INSTANCE, TransportQueryLanguageAction.class));
+    }
+
+    /**
+     * Returns executor builders for thread pools used by the query pipeline.
+     *
+     * @param settings the node settings
+     * @return list of executor builders
+     */
+    @Override
+    public List<ExecutorBuilder<?>> getExecutorBuilders(Settings settings) {
+        return Collections.singletonList(
+            new ScalingExecutorBuilder("sql_background_io", 1, 4, org.opensearch.common.unit.TimeValue.timeValueMinutes(5))
+        );
     }
 }

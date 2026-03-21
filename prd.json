@@ -70,8 +70,8 @@
         "Only files inside modules/query-languages/ are modified"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": "This should be very similar to the PPL endpoint — same transport action, just different QueryType. The UnifiedQueryPlanner handles both SQL and PPL based on the QueryType in UnifiedQueryContext."
+      "passes": true,
+      "notes": "Implemented RestSqlAction mirroring RestPplAction with QueryType.SQL and route POST /_sql. Reuses same TransportQueryLanguageAction. Plugin registers both handlers."
     },
     {
       "id": "US-005",

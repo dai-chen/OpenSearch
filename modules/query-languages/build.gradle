@@ -147,6 +147,10 @@ dependencies {
 
   // Calcite bytecode references @Immutable from immutables
   compileOnly 'org.immutables:value-annotations:2.8.8'
+
+  // Jackson databind — needed by OpenSearchExprValueFactory at runtime
+  implementation "com.fasterxml.jackson.core:jackson-databind:${versions.jackson_databind}"
+  implementation "com.fasterxml.jackson.core:jackson-annotations:${versions.jackson_annotations}"
 }
 
 // Map multiple jars to shared license/notice files
@@ -154,6 +158,7 @@ dependencyLicenses {
   mapping from: /unified-query-.*/, to: 'unified-query'
   mapping from: /calcite-.*/, to: 'calcite'
   mapping from: /guava-.*/, to: 'guava'
+  mapping from: /jackson-.*/, to: 'jackson'
 }
 
 // Exclude okhttp-aws-signer globally (only published on JitPack, not needed)
@@ -185,10 +190,6 @@ configurations.all {
 }
 
 thirdPartyAudit.ignoreMissingClasses(
-  // Jackson — provided by server
-  'com.fasterxml.jackson.databind.DeserializationFeature',
-  'com.fasterxml.jackson.databind.ObjectMapper',
-  'com.fasterxml.jackson.databind.ObjectWriter',
   // Commons codec — provided by server
   'org.apache.commons.codec.binary.Base32',
   'org.apache.commons.codec.binary.Hex',

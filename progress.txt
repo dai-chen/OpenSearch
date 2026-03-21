@@ -115,3 +115,15 @@
   - `RestToXContentListener` handles serializing `ToXContentObject` responses to the REST channel
   - Constructor javadoc is required even for no-arg constructors on public classes
 ---
+
+## 2026-03-21T01:37 - US-004
+- Implemented POST /_sql REST endpoint reusing the same transport action as PPL
+- Files changed:
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/RestSqlAction.java` — BaseRestHandler for POST /_sql, parses JSON body with 'query' field, delegates to transport action with QueryType.SQL
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/QueryLanguagesPlugin.java` — Updated to register both RestPplAction and RestSqlAction (Arrays.asList instead of singletonList)
+  - `modules/query-languages/src/test/java/org/opensearch/querylanguages/QueryLanguagesPluginTests.java` — Updated assertion from 1 to 2 REST handlers
+- All checks pass: build, test, internalClusterTest
+- **Learnings for future iterations:**
+  - Adding a new REST endpoint for a different query language is trivial — just copy the existing handler, change QueryType and route
+  - The transport action is fully reusable across SQL/PPL since QueryType is passed in the request
+---

@@ -15,7 +15,9 @@ import org.apache.calcite.schema.impl.AbstractSchema;
 import org.opensearch.action.support.ActionFilters;
 import org.opensearch.action.support.HandledTransportAction;
 import org.opensearch.common.inject.Inject;
+import org.opensearch.common.unit.TimeValue;
 import org.opensearch.core.action.ActionListener;
+import org.opensearch.core.common.unit.ByteSizeValue;
 import org.opensearch.sql.api.UnifiedQueryContext;
 import org.opensearch.sql.api.UnifiedQueryPlanner;
 import org.opensearch.sql.api.compiler.UnifiedQueryCompiler;
@@ -80,9 +82,9 @@ public class TransportQueryLanguageAction extends HandledTransportAction<QueryLa
                     .language(request.getQueryType())
                     .catalog("opensearch", schema)
                     .defaultNamespace("opensearch")
-                    .setting("calcite.engine.enabled", true)
-                    .setting("calcite.pushdown.enabled", true)
-                    .setting("query.size_limit", 200)
+                    .setting("plugins.calcite.enabled", true)
+                    .setting("plugins.calcite.pushdown.enabled", true)
+                    .setting("plugins.query.size_limit", 200)
                     .build()
             ) {
                 UnifiedQueryPlanner planner = new UnifiedQueryPlanner(context);
@@ -126,13 +128,15 @@ public class TransportQueryLanguageAction extends HandledTransportAction<QueryLa
             Map<Key, Object> m = new HashMap<>();
             m.put(Key.CALCITE_ENGINE_ENABLED, true);
             m.put(Key.CALCITE_PUSHDOWN_ENABLED, true);
+            m.put(Key.CALCITE_PUSHDOWN_ROWCOUNT_ESTIMATION_FACTOR, 1.0);
             m.put(Key.QUERY_SIZE_LIMIT, 200);
             m.put(Key.QUERY_BUCKET_SIZE, 1000);
             m.put(Key.SEARCH_MAX_BUCKETS, 65535);
-            m.put(Key.QUERY_MEMORY_LIMIT, "85%");
+            m.put(Key.QUERY_MEMORY_LIMIT, new ByteSizeValue((long) (Runtime.getRuntime().maxMemory() * 0.85)));
             m.put(Key.FIELD_TYPE_TOLERANCE, false);
             m.put(Key.SQL_ENABLED, true);
             m.put(Key.PPL_ENABLED, true);
+            m.put(Key.SQL_CURSOR_KEEP_ALIVE, TimeValue.timeValueMinutes(1));
             m.put(Key.CALCITE_FALLBACK_ALLOWED, false);
             DEFAULTS = Collections.unmodifiableMap(m);
         }
