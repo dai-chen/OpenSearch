@@ -1,0 +1,207 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The OpenSearch Contributors require contributions made to
+ * this file be licensed under the Apache-2.0 license or a
+ * compatible open source license.
+ */
+
+apply plugin: 'opensearch.internal-cluster-test'
+
+def sqlUnifiedQueryVersion = '3.6.0.0-SNAPSHOT'
+
+opensearchplugin {
+  description = 'SQL and PPL query language support for OpenSearch'
+  classname = 'org.opensearch.querylanguages.QueryLanguagesPlugin'
+}
+
+repositories {
+  maven {
+    name = 'OpenSearch Snapshots'
+    url = 'https://ci.opensearch.org/ci/dbc/snapshots/maven/'
+  }
+}
+
+// Guava is forbidden on compile classpaths by OpenSearch's forbidden-dependencies.gradle.
+configurations {
+  calciteCompile
+  compileClasspath { exclude group: 'com.google.guava' }
+  testCompileClasspath { exclude group: 'com.google.guava' }
+}
+sourceSets.main.compileClasspath += configurations.calciteCompile
+sourceSets.test.compileClasspath += configurations.calciteCompile
+
+dependencies {
+  implementation("org.opensearch.query:unified-query-api:${sqlUnifiedQueryVersion}") {
+    exclude group: 'org.opensearch'
+    // Exclude deps already provided by server or not needed
+    exclude group: 'org.apache.logging.log4j'
+    exclude group: 'com.fasterxml.jackson.core'
+    exclude group: 'com.fasterxml.jackson.dataformat'
+    exclude group: 'org.slf4j'
+    exclude group: 'org.yaml', module: 'snakeyaml'
+    exclude group: 'commons-codec', module: 'commons-codec'
+    exclude group: 'commons-logging', module: 'commons-logging'
+    exclude group: 'org.apache.httpcomponents'
+    exclude group: 'org.apache.httpcomponents.core5'
+    exclude group: 'org.apache.httpcomponents.client5'
+    exclude group: 'joda-time', module: 'joda-time'
+    exclude group: 'org.locationtech.jts'
+    exclude group: 'com.amazonaws'
+    exclude group: 'com.squareup.okhttp3'
+    exclude group: 'com.squareup.okio'
+    exclude group: 'org.jetbrains.kotlin'
+    exclude group: 'org.jetbrains', module: 'annotations'
+    exclude group: 'com.google.protobuf'
+  }
+  implementation("org.opensearch.query:unified-query-core:${sqlUnifiedQueryVersion}") {
+    exclude group: 'org.opensearch'
+    exclude group: 'org.apache.logging.log4j'
+    exclude group: 'com.fasterxml.jackson.core'
+    exclude group: 'com.fasterxml.jackson.dataformat'
+    exclude group: 'org.slf4j'
+    exclude group: 'org.yaml', module: 'snakeyaml'
+    exclude group: 'commons-codec', module: 'commons-codec'
+    exclude group: 'commons-logging', module: 'commons-logging'
+    exclude group: 'org.apache.httpcomponents'
+    exclude group: 'org.apache.httpcomponents.core5'
+    exclude group: 'org.apache.httpcomponents.client5'
+    exclude group: 'joda-time', module: 'joda-time'
+    exclude group: 'org.locationtech.jts'
+    exclude group: 'com.amazonaws'
+    exclude group: 'com.squareup.okhttp3'
+    exclude group: 'com.squareup.okio'
+    exclude group: 'org.jetbrains.kotlin'
+    exclude group: 'org.jetbrains', module: 'annotations'
+    exclude group: 'com.google.protobuf'
+  }
+  implementation("org.opensearch.query:unified-query-ppl:${sqlUnifiedQueryVersion}") {
+    exclude group: 'org.opensearch'
+    exclude group: 'org.apache.logging.log4j'
+    exclude group: 'com.fasterxml.jackson.core'
+    exclude group: 'com.fasterxml.jackson.dataformat'
+    exclude group: 'org.slf4j'
+    exclude group: 'org.yaml', module: 'snakeyaml'
+    exclude group: 'commons-codec', module: 'commons-codec'
+    exclude group: 'commons-logging', module: 'commons-logging'
+    exclude group: 'org.apache.httpcomponents'
+    exclude group: 'org.apache.httpcomponents.core5'
+    exclude group: 'org.apache.httpcomponents.client5'
+    exclude group: 'joda-time', module: 'joda-time'
+    exclude group: 'org.locationtech.jts'
+    exclude group: 'com.amazonaws'
+    exclude group: 'com.squareup.okhttp3'
+    exclude group: 'com.squareup.okio'
+    exclude group: 'org.jetbrains.kotlin'
+    exclude group: 'org.jetbrains', module: 'annotations'
+    exclude group: 'com.google.protobuf'
+  }
+
+  // Calcite core — also exclude server-provided transitive deps
+  implementation("org.apache.calcite:calcite-core:1.41.0") {
+    exclude group: 'org.slf4j'
+    exclude group: 'com.fasterxml.jackson.core'
+    exclude group: 'com.fasterxml.jackson.dataformat'
+    exclude group: 'org.apache.httpcomponents'
+    exclude group: 'org.apache.httpcomponents.core5'
+    exclude group: 'org.apache.httpcomponents.client5'
+    exclude group: 'commons-codec', module: 'commons-codec'
+    exclude group: 'commons-logging', module: 'commons-logging'
+  }
+  implementation("org.apache.calcite:calcite-linq4j:1.41.0") {
+    exclude group: 'org.slf4j'
+  }
+
+  // Calcite code generation (needed at runtime for Enumerable pipeline)
+  implementation "org.codehaus.janino:janino:3.1.12"
+  implementation "org.codehaus.janino:commons-compiler:3.1.12"
+
+  // Guava — required by Calcite at runtime
+  implementation "com.google.guava:guava:${versions.guava}"
+  implementation "com.google.guava:failureaccess:1.0.2"
+  calciteCompile "com.google.guava:guava:${versions.guava}"
+
+  // Calcite bytecode references @Immutable from immutables
+  compileOnly 'org.immutables:value-annotations:2.8.8'
+}
+
+// Map multiple jars to shared license/notice files
+dependencyLicenses {
+  mapping from: /unified-query-.*/, to: 'unified-query'
+  mapping from: /calcite-.*/, to: 'calcite'
+  mapping from: /guava-.*/, to: 'guava'
+}
+
+// Exclude okhttp-aws-signer globally (only published on JitPack, not needed)
+configurations.all {
+  exclude group: 'com.github.babbel', module: 'okhttp-aws-signer'
+
+  resolutionStrategy {
+    force "com.google.guava:guava:${versions.guava}"
+    force "com.google.guava:failureaccess:1.0.2"
+    force "com.google.errorprone:error_prone_annotations:2.36.0"
+    force "org.checkerframework:checker-qual:3.43.0"
+    force "com.fasterxml.jackson.core:jackson-core:${versions.jackson}"
+    force "com.fasterxml.jackson.core:jackson-databind:${versions.jackson_databind}"
+    force "com.fasterxml.jackson.core:jackson-annotations:${versions.jackson_annotations}"
+    force "com.fasterxml.jackson.dataformat:jackson-dataformat-cbor:${versions.jackson}"
+    force "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:${versions.jackson}"
+    force "org.slf4j:slf4j-api:${versions.slf4j}"
+    force "org.locationtech.jts:jts-core:${versions.jts}"
+    force "commons-codec:commons-codec:${versions.commonscodec}"
+    force "commons-logging:commons-logging:1.3.5"
+    force "joda-time:joda-time:2.12.7"
+    force "org.yaml:snakeyaml:2.4"
+    force "org.apache.commons:commons-lang3:3.18.0"
+    force "org.apache.commons:commons-text:1.11.0"
+    force "net.minidev:json-smart:2.5.2"
+    force "org.apache.httpcomponents.client5:httpclient5:5.6"
+    force "org.apache.httpcomponents.core5:httpcore5:5.4"
+  }
+}
+
+thirdPartyAudit.ignoreMissingClasses(
+  // Jackson — provided by server
+  'com.fasterxml.jackson.databind.DeserializationFeature',
+  'com.fasterxml.jackson.databind.ObjectMapper',
+  'com.fasterxml.jackson.databind.ObjectWriter',
+  // Commons codec — provided by server
+  'org.apache.commons.codec.binary.Base32',
+  'org.apache.commons.codec.binary.Hex',
+  'org.apache.commons.codec.digest.DigestUtils',
+  'org.apache.commons.codec.language.Soundex',
+  // Ant — optional compile dependency of janino
+  'org.apache.tools.ant.taskdefs.compilers.DefaultCompilerAdapter',
+  'org.apache.tools.ant.taskdefs.Javac',
+  'org.apache.tools.ant.types.Path',
+  // JTS — provided by server
+  'org.locationtech.jts.algorithm.InteriorPoint',
+  'org.locationtech.jts.geom.util.GeometryFixer',
+  'org.locationtech.jts.operation.buffer.OffsetCurve',
+  'org.locationtech.jts.triangulate.polygon.ConstrainedDelaunayTriangulator',
+  'org.locationtech.jts.triangulate.tri.Tri',
+  // SLF4J — provided by server
+  'org.slf4j.Logger',
+  'org.slf4j.LoggerFactory',
+  'org.slf4j.Marker',
+  'org.slf4j.MarkerFactory',
+  'org.slf4j.helpers.FormattingTuple',
+  'org.slf4j.helpers.MessageFormatter',
+)
+
+thirdPartyAudit.ignoreViolations(
+  // Guava Unsafe usage
+  'com.google.common.cache.Striped64',
+  'com.google.common.cache.Striped64$1',
+  'com.google.common.cache.Striped64$Cell',
+  'com.google.common.hash.LittleEndianByteArray$UnsafeByteArray',
+  'com.google.common.hash.LittleEndianByteArray$UnsafeByteArray$1',
+  'com.google.common.hash.LittleEndianByteArray$UnsafeByteArray$2',
+  'com.google.common.hash.Striped64',
+  'com.google.common.hash.Striped64$1',
+  'com.google.common.hash.Striped64$Cell',
+  'com.google.common.primitives.UnsignedBytes$LexicographicalComparatorHolder$UnsafeComparator',
+  'com.google.common.primitives.UnsignedBytes$LexicographicalComparatorHolder$UnsafeComparator$1',
+  'com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper',
+  'com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper$1',
+)
