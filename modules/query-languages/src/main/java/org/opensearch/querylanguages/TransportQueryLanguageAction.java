@@ -8,10 +8,16 @@
 
 package org.opensearch.querylanguages;
 
+import org.apache.calcite.config.Lex;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.schema.Schema;
 import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.impl.AbstractSchema;
+import org.apache.calcite.sql.SqlNode;
+import org.apache.calcite.sql.parser.SqlParser;
+import org.apache.calcite.tools.FrameworkConfig;
+import org.apache.calcite.tools.Frameworks;
+import org.apache.calcite.tools.Planner;
 import org.opensearch.action.support.ActionFilters;
 import org.opensearch.action.support.HandledTransportAction;
 import org.opensearch.common.inject.Inject;
@@ -22,6 +28,7 @@ import org.opensearch.sql.api.UnifiedQueryContext;
 import org.opensearch.sql.api.UnifiedQueryPlanner;
 import org.opensearch.sql.api.compiler.UnifiedQueryCompiler;
 import org.opensearch.sql.common.setting.Settings;
+import org.opensearch.sql.executor.QueryType;
 import org.opensearch.sql.opensearch.client.OpenSearchNodeClient;
 import org.opensearch.sql.opensearch.storage.OpenSearchIndex;
 import org.opensearch.tasks.Task;
@@ -87,8 +94,23 @@ public class TransportQueryLanguageAction extends HandledTransportAction<QueryLa
                     .setting("plugins.query.size_limit", 200)
                     .build()
             ) {
-                UnifiedQueryPlanner planner = new UnifiedQueryPlanner(context);
-                RelNode plan = planner.plan(request.getQuery());
+                RelNode plan;
+                if (request.getQueryType() == QueryType.SQL) {
+                    // SQL: use Calcite's native SQL parser → validate → convert to RelNode
+                    // Override parser config to use case-insensitive identifiers (JAVA lexing)
+                    FrameworkConfig baseConfig = context.getPlanContext().config;
+                    FrameworkConfig sqlConfig = Frameworks.newConfigBuilder(baseConfig)
+                        .parserConfig(SqlParser.config().withLex(Lex.JAVA))
+                        .build();
+                    Planner calcitePlanner = Frameworks.getPlanner(sqlConfig);
+                    SqlNode parsed = calcitePlanner.parse(request.getQuery());
+                    SqlNode validated = calcitePlanner.validate(parsed);
+                    plan = calcitePlanner.rel(validated).rel;
+                } else {
+                    // PPL: use UnifiedQueryPlanner which has the PPL parser
+                    UnifiedQueryPlanner planner = new UnifiedQueryPlanner(context);
+                    plan = planner.plan(request.getQuery());
+                }
 
                 UnifiedQueryCompiler compiler = new UnifiedQueryCompiler(context);
                 PreparedStatement stmt = compiler.compile(plan);

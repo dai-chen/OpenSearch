@@ -38,6 +38,14 @@
 - `HardcodedSettings` extends `org.opensearch.sql.common.setting.Settings` for PoC defaults
 - Constructor javadoc required even for no-arg constructors on public classes
 
+## Discovered Patterns (US-005)
+- Setting key strings must match `Settings.Key` enum's `keyValue` field (e.g., `plugins.calcite.enabled` not `calcite.engine.enabled`)
+- `QUERY_MEMORY_LIMIT` expects `ByteSizeValue`, `SQL_CURSOR_KEEP_ALIVE` expects `TimeValue`
+- `jackson-databind` is NOT provided by OpenSearch server — must be bundled for unified-query-opensearch
+- The `sql_background_io` thread pool must be registered via `getExecutorBuilders()` with `ScalingExecutorBuilder`
+- `CALCITE_PUSHDOWN_ROWCOUNT_ESTIMATION_FACTOR` (Double) must be in HardcodedSettings
+- Integration tests can use transport client directly: `client().execute(QueryLanguageAction.INSTANCE, request).actionGet()`
+
 ## GUARDRAILS — DO NOT VIOLATE
 - ONLY modify files inside `modules/query-languages/` (exception: `settings.gradle` for module registration in US-001 only)
 - Do NOT modify any existing module, plugin, or server code
@@ -126,4 +134,29 @@
 - **Learnings for future iterations:**
   - Adding a new REST endpoint for a different query language is trivial — just copy the existing handler, change QueryType and route
   - The transport action is fully reusable across SQL/PPL since QueryType is passed in the request
+---
+
+## 2026-03-21T01:55 - US-005
+- Implemented PPL integration test (QueryLanguagesPplIT) that indexes 3 documents, runs `source = test_ppl | where age > 21`, and verifies 2 rows returned
+- Fixed multiple pre-existing issues discovered during end-to-end testing:
+  1. Setting key strings in TransportQueryLanguageAction were wrong (`calcite.engine.enabled` → `plugins.calcite.enabled`, etc.)
+  2. Missing `CALCITE_PUSHDOWN_ROWCOUNT_ESTIMATION_FACTOR` in HardcodedSettings (caused NPE in computeSelfCost)
+  3. Missing `SQL_CURSOR_KEEP_ALIVE` setting (needed by OpenSearchIndex for PIT creation, expects TimeValue)
+  4. `QUERY_MEMORY_LIMIT` was String "85%" but needs to be ByteSizeValue
+  5. Missing `jackson-databind` dependency (needed by OpenSearchExprValueFactory at runtime, not provided by server)
+  6. Missing `sql_background_io` thread pool registration (needed by BackgroundSearchScanner)
+- Files changed:
+  - `modules/query-languages/src/internalClusterTest/java/org/opensearch/querylanguages/QueryLanguagesPplIT.java` — new IT class
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/TransportQueryLanguageAction.java` — fixed setting keys, added missing settings
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/QueryLanguagesPlugin.java` — registered sql_background_io thread pool
+  - `modules/query-languages/build.gradle` — added jackson-databind/annotations deps, jackson license mapping, removed jackson from ignoreMissingClasses
+  - `modules/query-languages/licenses/jackson-*` — LICENSE, NOTICE, SHA files for jackson jars
+- **Learnings for future iterations:**
+  - Setting key strings must match `Settings.Key` enum's `keyValue` field exactly (e.g., `plugins.calcite.enabled` not `calcite.engine.enabled`). Use `javap -c` on `Settings$Key.class` to verify.
+  - `QUERY_MEMORY_LIMIT` expects `ByteSizeValue`, not a String percentage
+  - `SQL_CURSOR_KEEP_ALIVE` expects `TimeValue` — needed for PIT creation
+  - `jackson-databind` is NOT provided by the OpenSearch server — must be bundled if unified-query-opensearch code needs it
+  - The unified-query-opensearch code requires a `sql_background_io` thread pool — register via `getExecutorBuilders()` with `ScalingExecutorBuilder`
+  - `CALCITE_PUSHDOWN_ROWCOUNT_ESTIMATION_FACTOR` must be in HardcodedSettings (Double type) — used by `AbstractCalciteIndexScan.computeSelfCost()`
+  - Integration tests use transport client directly (`client().execute(ActionType, Request)`) — simpler than REST client which requires Netty4 test case
 ---

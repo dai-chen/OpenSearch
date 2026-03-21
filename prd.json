@@ -86,7 +86,7 @@
         "Only files inside modules/query-languages/ are modified"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "Place in src/internalClusterTest/java/. Use OpenSearchIntegTestCase as base. Index a few simple documents, query via REST client, assert response. Keep it minimal — just prove the pipeline works end-to-end. Reference existing ITs in the repo for patterns (e.g., modules/reindex/src/internalClusterTest/)."
     },
     {
