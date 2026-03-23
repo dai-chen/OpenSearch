@@ -1,0 +1,192 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The OpenSearch Contributors require contributions made to
+ * this file be licensed under the Apache-2.0 license or a
+ * compatible open source license.
+ */
+
+package org.opensearch.querylanguages.opensearch.request;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.Objects;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import org.opensearch.action.search.SearchRequest;
+import org.opensearch.action.search.SearchResponse;
+import org.opensearch.action.search.SearchScrollRequest;
+import org.opensearch.common.unit.TimeValue;
+import org.opensearch.core.common.io.stream.StreamInput;
+import org.opensearch.core.common.io.stream.StreamOutput;
+import org.opensearch.search.builder.SearchSourceBuilder;
+import org.opensearch.querylanguages.opensearch.data.value.OpenSearchExprValueFactory;
+import org.opensearch.querylanguages.opensearch.response.OpenSearchResponse;
+import org.opensearch.querylanguages.opensearch.storage.OpenSearchIndex;
+
+/**
+ * OpenSearch scroll search request. This has to be stateful because it needs to:
+ *
+ * <p>1) Accumulate search source builder when visiting logical plan to push down operation 2)
+ * Maintain scroll ID between calls to client search method
+ */
+public class OpenSearchScrollRequest implements OpenSearchRequest {
+
+  /**
+   * Search request used to initiate paged (scrolled) search. Not needed to get subsequent pages.
+   */
+  private final transient SearchRequest initialSearchRequest;
+
+  /** Scroll context timeout. */
+  private final TimeValue scrollTimeout;
+
+  /** {@link OpenSearchRequest.IndexName}. */
+  private final IndexName indexName;
+
+  /** Index name. */
+  private final OpenSearchExprValueFactory exprValueFactory;
+
+  /**
+   * Scroll id which is set after first request issued. Because OpenSearchClient is shared by
+   * multiple threads so this state has to be maintained here.
+   */
+  private String scrollId = NO_SCROLL_ID;
+
+  public static final String NO_SCROLL_ID = "";
+
+  private boolean needClean = true;
+
+  private final List<String> includes;
+
+  /** Constructor. */
+  public OpenSearchScrollRequest(
+      IndexName indexName,
+      TimeValue scrollTimeout,
+      SearchSourceBuilder sourceBuilder,
+      OpenSearchExprValueFactory exprValueFactory,
+      List<String> includes) {
+    this.indexName = indexName;
+    this.scrollTimeout = scrollTimeout;
+    this.exprValueFactory = exprValueFactory;
+    this.initialSearchRequest =
+        new SearchRequest()
+            .indices(indexName.getIndexNames())
+            .scroll(scrollTimeout)
+            .source(sourceBuilder);
+
+    this.includes = includes;
+  }
+
+  /**
+   * Executes request using either {@param searchAction} or {@param scrollAction} as appropriate.
+   */
+  @Override
+  public OpenSearchResponse search(
+      Function<SearchRequest, SearchResponse> searchAction,
+      Function<SearchScrollRequest, SearchResponse> scrollAction) {
+    SearchResponse openSearchResponse;
+    if (isScroll()) {
+      openSearchResponse = scrollAction.apply(scrollRequest());
+    } else {
+      if (initialSearchRequest == null) {
+        // Probably a first page search (since there is no scroll set) called on a deserialized
+        // `OpenSearchScrollRequest`, which has no `initialSearchRequest`.
+        throw new UnsupportedOperationException("Misuse of OpenSearchScrollRequest");
+      }
+      openSearchResponse = searchAction.apply(initialSearchRequest);
+    }
+
+    var response = new OpenSearchResponse(openSearchResponse, exprValueFactory, includes, false);
+    needClean = response.isEmpty();
+    if (!needClean) {
+      setScrollId(openSearchResponse.getScrollId());
+    }
+    return response;
+  }
+
+  @Override
+  public void clean(Consumer<String> cleanAction) {
+    try {
+      // clean on the last page only, to prevent closing the scroll/cursor in the middle of paging.
+      if (needClean && isScroll()) {
+        cleanAction.accept(getScrollId());
+        setScrollId(NO_SCROLL_ID);
+      }
+    } finally {
+      reset();
+    }
+  }
+
+  @Override
+  public void forceClean(Consumer<String> cleanAction) {
+    throw new UnsupportedOperationException(
+        "Force clean is unsupported in OpenSearchScrollRequest");
+  }
+
+  /**
+   * Is scroll started which means pages after first is being requested.
+   *
+   * @return true if scroll started
+   */
+  public boolean isScroll() {
+    return !scrollId.equals(NO_SCROLL_ID);
+  }
+
+  /**
+   * Generate OpenSearch scroll request by scroll id maintained.
+   *
+   * @return scroll request
+   */
+  public SearchScrollRequest scrollRequest() {
+    Objects.requireNonNull(scrollId, "Scroll id cannot be null");
+    return new SearchScrollRequest().scroll(scrollTimeout).scrollId(scrollId);
+  }
+
+  /**
+   * Reset internal state in case any stale data. However, ideally the same instance is not supposed
+   * to be reused across different physical plan.
+   */
+  public void reset() {
+    scrollId = NO_SCROLL_ID;
+  }
+
+  public String getScrollId() {
+    return scrollId;
+  }
+
+  public void setScrollId(String scrollId) {
+    this.scrollId = scrollId;
+  }
+
+  @Override
+  public OpenSearchExprValueFactory getExprValueFactory() {
+    return exprValueFactory;
+  }
+
+  @Override
+  public boolean hasAnotherBatch() {
+    return !needClean && !scrollId.equals(NO_SCROLL_ID);
+  }
+
+  @Override
+  public void writeTo(StreamOutput out) throws IOException {
+    out.writeTimeValue(scrollTimeout);
+    out.writeString(scrollId);
+    out.writeStringCollection(includes);
+    indexName.writeTo(out);
+  }
+
+  /**
+   * Constructs OpenSearchScrollRequest from serialized representation.
+   *
+   * @param in stream to read data from.
+   * @param engine OpenSearchSqlEngine to get node-specific context.
+   * @throws IOException thrown if reading from input {@code in} fails.
+   */
+  public OpenSearchScrollRequest(StreamInput in, Object engine)
+      throws IOException {
+    // TODO: Cursor/pagination deserialization not yet supported in core
+    throw new UnsupportedOperationException(
+        "OpenSearchScrollRequest deserialization not yet supported in core");
+  }
+}

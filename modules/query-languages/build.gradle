@@ -96,30 +96,8 @@ dependencies {
     exclude group: 'org.jetbrains', module: 'annotations'
     exclude group: 'com.google.protobuf'
   }
-  // OpenSearch module code: OpenSearchIndex (Calcite Table), OpenSearchNodeClient, mappings, etc.
-  implementation("org.opensearch.query:unified-query-opensearch:${sqlUnifiedQueryVersion}") {
-    exclude group: 'org.opensearch'
-    exclude group: 'org.apache.logging.log4j'
-    exclude group: 'com.fasterxml.jackson.core'
-    exclude group: 'com.fasterxml.jackson.dataformat'
-    exclude group: 'org.slf4j'
-    exclude group: 'org.yaml', module: 'snakeyaml'
-    exclude group: 'commons-codec', module: 'commons-codec'
-    exclude group: 'commons-logging', module: 'commons-logging'
-    exclude group: 'org.apache.httpcomponents'
-    exclude group: 'org.apache.httpcomponents.core5'
-    exclude group: 'org.apache.httpcomponents.client5'
-    exclude group: 'joda-time', module: 'joda-time'
-    exclude group: 'org.locationtech.jts'
-    exclude group: 'com.amazonaws'
-    exclude group: 'com.squareup.okhttp3'
-    exclude group: 'com.squareup.okio'
-    exclude group: 'org.jetbrains.kotlin'
-    exclude group: 'org.jetbrains', module: 'annotations'
-    exclude group: 'com.google.protobuf'
-    exclude group: 'org.json', module: 'json'
-    exclude group: 'io.github.resilience4j'
-  }
+  // OpenSearch module code (OpenSearchIndex, OpenSearchNodeClient, mappings, etc.)
+  // is now inlined in org.opensearch.querylanguages.opensearch.* — no external dependency.
 
   // Calcite core — also exclude server-provided transitive deps
   implementation("org.apache.calcite:calcite-core:1.41.0") {

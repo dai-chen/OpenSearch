@@ -44,10 +44,52 @@ dependencies {
   // Also provides calcite-core transitively via api.
   api project(':sandbox:libs:analytics-framework')
 
+  // commons-codec required at runtime by Calcite's BuiltInMethod static initializer
+  runtimeOnly "commons-codec:commons-codec:${versions.commonscodec}"
+
+  // Calcite code generation — required at runtime for Enumerable pipeline
+  runtimeOnly "org.codehaus.janino:janino:3.1.12"
+  runtimeOnly "org.codehaus.janino:commons-compiler:3.1.12"
+
+  // Calcite transitive runtime deps needed by BuiltInMethod static initializer
+  runtimeOnly "org.jooq:joou-java-6:0.9.4"
+  runtimeOnly "com.jayway.jsonpath:json-path:2.9.0"
+  runtimeOnly "net.minidev:json-smart:2.5.2"
+  runtimeOnly "net.minidev:accessors-smart:2.5.2"
+  runtimeOnly "org.ow2.asm:asm:9.7.1"
+
+  // Avatica transitive runtime deps needed by BuiltInConnectionProperty
+  runtimeOnly "org.apache.httpcomponents.core5:httpcore5:5.4"
+  runtimeOnly "org.apache.httpcomponents.core5:httpcore5-h2:5.4"
+
+  // Additional Calcite runtime deps needed when SQL plugin extends this plugin
+  runtimeOnly "org.apache.commons:commons-math3:3.6.1"
+  runtimeOnly "com.google.uzaygezen:uzaygezen-core:0.2"
+  runtimeOnly "net.sf.opencsv:opencsv:2.3"
+  runtimeOnly "com.yahoo.datasketches:sketches-core:0.9.0"
+  runtimeOnly "com.yahoo.datasketches:memory:0.9.0"
+  runtimeOnly "org.locationtech.proj4j:proj4j:1.2.2"
+  runtimeOnly "org.locationtech.jts:jts-core:${versions.jts}"
+  runtimeOnly "org.locationtech.jts.io:jts-io-common:${versions.jts}"
+  runtimeOnly "com.esri.geometry:esri-geometry-api:2.2.4"
+  runtimeOnly "org.apache.calcite.avatica:avatica-metrics:1.27.0"
+  runtimeOnly "com.fasterxml.jackson.core:jackson-core:${versions.jackson}"
+  runtimeOnly "com.fasterxml.jackson.core:jackson-databind:${versions.jackson_databind}"
+  runtimeOnly "com.fasterxml.jackson.core:jackson-annotations:${versions.jackson_annotations}"
+  runtimeOnly "org.apache.commons:commons-dbcp2:2.11.0"
+  runtimeOnly "org.apache.commons:commons-pool2:2.12.0"
+  runtimeOnly "org.apache.commons:commons-lang3:3.18.0"
+  runtimeOnly "commons-io:commons-io:2.15.0"
+  runtimeOnly "com.google.errorprone:error_prone_annotations:2.28.0"
+  runtimeOnly "org.antlr:antlr4-runtime:4.13.2"
+  runtimeOnly "org.apache.httpcomponents.core5:httpcore5-reactive:5.4"
+  runtimeOnly "org.apache.httpcomponents.client5:httpclient5:5.6"
+  runtimeOnly "com.ibm.icu:icu4j:72.1"
+
   // Guava for test compilation — Calcite API exposes guava types
   calciteTestCompile "com.google.guava:guava:${versions.guava}"
 
-  // Calcite code generation (optional in calcite-core POM, needed at runtime for Enumerable pipeline)
+  // Calcite code generation for tests
   testRuntimeOnly "org.codehaus.janino:janino:3.1.12"
   testRuntimeOnly "org.codehaus.janino:commons-compiler:3.1.12"
 
