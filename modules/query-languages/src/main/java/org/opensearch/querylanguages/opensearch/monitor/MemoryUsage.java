@@ -10,7 +10,15 @@ package org.opensearch.querylanguages.opensearch.monitor;
 
 /** Memory usage interface. It is used to get the memory usage of the VM. */
 public interface MemoryUsage {
-  long usage();
+    /**
+     * Returns current memory usage in bytes.
+     * @return memory usage in bytes
+     */
+    long usage();
 
-  void setUsage(long usage);
+    /**
+     * Sets the memory usage value.
+     * @param value memory usage in bytes
+     */
+    void setUsage(long value);
 }

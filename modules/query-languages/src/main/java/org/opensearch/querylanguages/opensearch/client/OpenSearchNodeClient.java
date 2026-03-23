@@ -10,15 +10,6 @@ package org.opensearch.querylanguages.opensearch.client;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ExecutionException;
-import java.util.function.Function;
-import java.util.function.Predicate;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import org.opensearch.OpenSearchSecurityException;
 import org.opensearch.action.admin.indices.create.CreateIndexRequest;
 import org.opensearch.action.admin.indices.exists.indices.IndicesExistsRequest;
@@ -26,8 +17,12 @@ import org.opensearch.action.admin.indices.exists.indices.IndicesExistsResponse;
 import org.opensearch.action.admin.indices.get.GetIndexResponse;
 import org.opensearch.action.admin.indices.mapping.get.GetMappingsResponse;
 import org.opensearch.action.admin.indices.settings.get.GetSettingsResponse;
-import org.opensearch.action.search.*;
-import org.opensearch.transport.client.node.NodeClient;
+import org.opensearch.action.search.CreatePitAction;
+import org.opensearch.action.search.CreatePitRequest;
+import org.opensearch.action.search.CreatePitResponse;
+import org.opensearch.action.search.DeletePitAction;
+import org.opensearch.action.search.DeletePitRequest;
+import org.opensearch.action.search.DeletePitResponse;
 import org.opensearch.cluster.metadata.AliasMetadata;
 import org.opensearch.common.action.ActionFuture;
 import org.opensearch.common.settings.Settings;
@@ -37,233 +32,225 @@ import org.opensearch.querylanguages.opensearch.mapping.IndexMapping;
 import org.opensearch.querylanguages.opensearch.request.OpenSearchRequest;
 import org.opensearch.querylanguages.opensearch.request.OpenSearchScrollRequest;
 import org.opensearch.querylanguages.opensearch.response.OpenSearchResponse;
+import org.opensearch.transport.client.node.NodeClient;
+
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /** OpenSearch connection by node client. */
 public class OpenSearchNodeClient implements OpenSearchClient {
 
-  public static final Function<String, Predicate<String>> ALL_FIELDS =
-      (anyIndex -> (anyField -> true));
+    public static final Function<String, Predicate<String>> ALL_FIELDS = (anyIndex -> (anyField -> true));
 
-  /** Node client provided by OpenSearch container. */
-  private final NodeClient client;
+    /** Node client provided by OpenSearch container. */
+    private final NodeClient client;
 
-  /** Constructor of OpenSearchNodeClient. */
-  public OpenSearchNodeClient(NodeClient client) {
-    this.client = client;
-  }
-
-  @Override
-  public boolean exists(String indexName) {
-    try {
-      IndicesExistsResponse checkExistResponse =
-          client.admin().indices().exists(new IndicesExistsRequest(indexName)).actionGet();
-      return checkExistResponse.isExists();
-    } catch (OpenSearchSecurityException e) {
-      throw e;
-    } catch (Exception e) {
-      throw new IllegalStateException("Failed to check if index [" + indexName + "] exists", e);
+    /** Constructor of OpenSearchNodeClient. */
+    public OpenSearchNodeClient(NodeClient client) {
+        this.client = client;
     }
-  }
 
-  @Override
-  public void createIndex(String indexName, Map<String, Object> mappings) {
-    try {
-      // TODO: 1.pass index settings (the number of primary shards, etc); 2.check response?
-      CreateIndexRequest createIndexRequest = new CreateIndexRequest(indexName).mapping(mappings);
-      client.admin().indices().create(createIndexRequest).actionGet();
-    } catch (Exception e) {
-      throw new IllegalStateException("Failed to create index [" + indexName + "]", e);
+    @Override
+    public boolean exists(String indexName) {
+        try {
+            IndicesExistsResponse checkExistResponse = client.admin().indices().exists(new IndicesExistsRequest(indexName)).actionGet();
+            return checkExistResponse.isExists();
+        } catch (OpenSearchSecurityException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to check if index [" + indexName + "] exists", e);
+        }
     }
-  }
 
-  /**
-   * Get field mappings of index by an index expression. Majority is copied from legacy
-   * LocalClusterState.
-   *
-   * <p>For simplicity, removed type (deprecated) and field filter in argument list. Also removed
-   * mapping cache, cluster state listener (mainly for performance and debugging).
-   *
-   * @param indexExpression index name expression
-   * @return index mapping(s) in our class to isolate OpenSearch API. IndexNotFoundException is
-   *     thrown if no index matched.
-   */
-  @Override
-  public Map<String, IndexMapping> getIndexMappings(String... indexExpression) {
-    try {
-      GetMappingsResponse mappingsResponse =
-          client.admin().indices().prepareGetMappings(indexExpression).setLocal(true).get();
-      if (mappingsResponse.mappings().isEmpty()) {
-        throw new IndexNotFoundException(indexExpression[0]);
-      }
-      return mappingsResponse.mappings().entrySet().stream()
-          .collect(
-              Collectors.toUnmodifiableMap(
-                  Map.Entry::getKey, cursor -> new IndexMapping(cursor.getValue())));
-    } catch (IndexNotFoundException | OpenSearchSecurityException e) {
-      // Re-throw directly to be treated as client error finally
-      throw e;
-    } catch (Exception e) {
-      throw new IllegalStateException(
-          "Failed to read mapping for index pattern [" + indexExpression + "]", e);
+    @Override
+    public void createIndex(String indexName, Map<String, Object> mappings) {
+        try {
+            // TODO: 1.pass index settings (the number of primary shards, etc); 2.check response?
+            CreateIndexRequest createIndexRequest = new CreateIndexRequest(indexName).mapping(mappings);
+            client.admin().indices().create(createIndexRequest).actionGet();
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to create index [" + indexName + "]", e);
+        }
     }
-  }
 
-  /**
-   * Fetch index.max_result_window settings according to index expression given.
-   *
-   * @param indexExpression index expression
-   * @return map from index name to its max result window
-   */
-  @Override
-  public Map<String, Integer> getIndexMaxResultWindows(String... indexExpression) {
-    try {
-      GetSettingsResponse settingsResponse =
-          client.admin().indices().prepareGetSettings(indexExpression).setLocal(true).get();
-      ImmutableMap.Builder<String, Integer> result = ImmutableMap.builder();
-      for (Map.Entry<String, Settings> indexToSetting :
-          settingsResponse.getIndexToSettings().entrySet()) {
-        Settings settings = indexToSetting.getValue();
-        result.put(
-            indexToSetting.getKey(),
-            settings.getAsInt(
-                IndexSettings.MAX_RESULT_WINDOW_SETTING.getKey(),
-                IndexSettings.MAX_RESULT_WINDOW_SETTING.getDefault(settings)));
-      }
-      return result.build();
-    } catch (OpenSearchSecurityException e) {
-      throw e;
-    } catch (Exception e) {
-      throw new IllegalStateException(
-          "Failed to read setting for index pattern [" + indexExpression + "]", e);
+    /**
+     * Get field mappings of index by an index expression. Majority is copied from legacy
+     * LocalClusterState.
+     *
+     * <p>For simplicity, removed type (deprecated) and field filter in argument list. Also removed
+     * mapping cache, cluster state listener (mainly for performance and debugging).
+     *
+     * @param indexExpression index name expression
+     * @return index mapping(s) in our class to isolate OpenSearch API. IndexNotFoundException is
+     *     thrown if no index matched.
+     */
+    @Override
+    public Map<String, IndexMapping> getIndexMappings(String... indexExpression) {
+        try {
+            GetMappingsResponse mappingsResponse = client.admin().indices().prepareGetMappings(indexExpression).setLocal(true).get();
+            if (mappingsResponse.mappings().isEmpty()) {
+                throw new IndexNotFoundException(indexExpression[0]);
+            }
+            return mappingsResponse.mappings()
+                .entrySet()
+                .stream()
+                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, cursor -> new IndexMapping(cursor.getValue())));
+        } catch (IndexNotFoundException | OpenSearchSecurityException e) {
+            // Re-throw directly to be treated as client error finally
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to read mapping for index pattern [" + indexExpression + "]", e);
+        }
     }
-  }
 
-  /** TODO: Scroll doesn't work for aggregation. Support aggregation later. */
-  @Override
-  public OpenSearchResponse search(OpenSearchRequest request) {
-    return request.search(
-        req -> client.search(req).actionGet(), req -> client.searchScroll(req).actionGet());
-  }
+    /**
+     * Fetch index.max_result_window settings according to index expression given.
+     *
+     * @param indexExpression index expression
+     * @return map from index name to its max result window
+     */
+    @Override
+    public Map<String, Integer> getIndexMaxResultWindows(String... indexExpression) {
+        try {
+            GetSettingsResponse settingsResponse = client.admin().indices().prepareGetSettings(indexExpression).setLocal(true).get();
+            ImmutableMap.Builder<String, Integer> result = ImmutableMap.builder();
+            for (Map.Entry<String, Settings> indexToSetting : settingsResponse.getIndexToSettings().entrySet()) {
+                Settings settings = indexToSetting.getValue();
+                result.put(
+                    indexToSetting.getKey(),
+                    settings.getAsInt(
+                        IndexSettings.MAX_RESULT_WINDOW_SETTING.getKey(),
+                        IndexSettings.MAX_RESULT_WINDOW_SETTING.getDefault(settings)
+                    )
+                );
+            }
+            return result.build();
+        } catch (OpenSearchSecurityException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to read setting for index pattern [" + indexExpression + "]", e);
+        }
+    }
 
-  /**
-   * Get the combination of the indices and the alias.
-   *
-   * @return the combination of the indices and the alias
-   */
-  @Override
-  public List<String> indices() {
-    final GetIndexResponse indexResponse =
-        client.admin().indices().prepareGetIndex().setLocal(true).get();
-    final Stream<String> aliasStream =
-        ImmutableList.copyOf(indexResponse.aliases().values()).stream()
+    /** TODO: Scroll doesn't work for aggregation. Support aggregation later. */
+    @Override
+    public OpenSearchResponse search(OpenSearchRequest request) {
+        return request.search(req -> client.search(req).actionGet(), req -> client.searchScroll(req).actionGet());
+    }
+
+    /**
+     * Get the combination of the indices and the alias.
+     *
+     * @return the combination of the indices and the alias
+     */
+    @Override
+    public List<String> indices() {
+        final GetIndexResponse indexResponse = client.admin().indices().prepareGetIndex().setLocal(true).get();
+        final Stream<String> aliasStream = ImmutableList.copyOf(indexResponse.aliases().values())
+            .stream()
             .flatMap(Collection::stream)
             .map(AliasMetadata::alias);
 
-    return Stream.concat(Arrays.stream(indexResponse.getIndices()), aliasStream)
-        .collect(Collectors.toList());
-  }
+        return Stream.concat(Arrays.stream(indexResponse.getIndices()), aliasStream).collect(Collectors.toList());
+    }
 
-  /**
-   * Get meta info of the cluster.
-   *
-   * @return meta info of the cluster.
-   */
-  @Override
-  public Map<String, String> meta() {
-    return ImmutableMap.of(
-        META_CLUSTER_NAME,
-        client.settings().get("cluster.name", "opensearch"),
-        "plugins.sql.pagination.api",
-        client.settings().get("plugins.sql.pagination.api", "true"));
-  }
+    /**
+     * Get meta info of the cluster.
+     *
+     * @return meta info of the cluster.
+     */
+    @Override
+    public Map<String, String> meta() {
+        return ImmutableMap.of(
+            META_CLUSTER_NAME,
+            client.settings().get("cluster.name", "opensearch"),
+            "plugins.sql.pagination.api",
+            client.settings().get("plugins.sql.pagination.api", "true")
+        );
+    }
 
-  @Override
-  public void forceCleanup(OpenSearchRequest request) {
-    if (request instanceof OpenSearchScrollRequest) {
-      request.forceClean(
-          scrollId -> {
-            try {
-              client.prepareClearScroll().addScrollId(scrollId).get();
-            } catch (Exception e) {
-              throw new IllegalStateException(
-                  "Failed to clean up resources for search request " + request, e);
+    @Override
+    public void forceCleanup(OpenSearchRequest request) {
+        if (request instanceof OpenSearchScrollRequest) {
+            request.forceClean(scrollId -> {
+                try {
+                    client.prepareClearScroll().addScrollId(scrollId).get();
+                } catch (Exception e) {
+                    throw new IllegalStateException("Failed to clean up resources for search request " + request, e);
+                }
+            });
+        } else {
+            request.forceClean(pitId -> {
+                DeletePitRequest deletePitRequest = new DeletePitRequest(pitId);
+                deletePit(deletePitRequest);
+            });
+        }
+    }
+
+    @Override
+    public void cleanup(OpenSearchRequest request) {
+        if (request instanceof OpenSearchScrollRequest) {
+            request.clean(scrollId -> {
+                try {
+                    client.prepareClearScroll().addScrollId(scrollId).get();
+                } catch (Exception e) {
+                    throw new IllegalStateException("Failed to clean up resources for search request " + request, e);
+                }
+            });
+        } else {
+            request.clean(pitId -> {
+                DeletePitRequest deletePitRequest = new DeletePitRequest(pitId);
+                deletePit(deletePitRequest);
+            });
+        }
+    }
+
+    @Override
+    public void schedule(Runnable task) {
+        // at that time, task already running the sql-worker ThreadPool.
+        task.run();
+    }
+
+    @Override
+    public NodeClient getNodeClient() {
+        return client;
+    }
+
+    @Override
+    public String createPit(CreatePitRequest createPitRequest) {
+        ActionFuture<CreatePitResponse> execute = this.client.execute(CreatePitAction.INSTANCE, createPitRequest);
+        try {
+            CreatePitResponse pitResponse = execute.get();
+            return pitResponse.getId();
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof OpenSearchSecurityException) {
+                throw (OpenSearchSecurityException) e.getCause();
             }
-          });
-    } else {
-      request.forceClean(
-          pitId -> {
-            DeletePitRequest deletePitRequest = new DeletePitRequest(pitId);
-            deletePit(deletePitRequest);
-          });
+            throw new RuntimeException("Error occurred while creating PIT for internal plugin operation", e);
+        } catch (InterruptedException e) {
+            throw new RuntimeException("Error occurred while creating PIT for internal plugin operation", e);
+        }
     }
-  }
 
-  @Override
-  public void cleanup(OpenSearchRequest request) {
-    if (request instanceof OpenSearchScrollRequest) {
-      request.clean(
-          scrollId -> {
-            try {
-              client.prepareClearScroll().addScrollId(scrollId).get();
-            } catch (Exception e) {
-              throw new IllegalStateException(
-                  "Failed to clean up resources for search request " + request, e);
+    @Override
+    public void deletePit(DeletePitRequest deletePitRequest) {
+        ActionFuture<DeletePitResponse> execute = this.client.execute(DeletePitAction.INSTANCE, deletePitRequest);
+        try {
+            execute.get();
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof OpenSearchSecurityException) {
+                throw (OpenSearchSecurityException) e.getCause();
             }
-          });
-    } else {
-      request.clean(
-          pitId -> {
-            DeletePitRequest deletePitRequest = new DeletePitRequest(pitId);
-            deletePit(deletePitRequest);
-          });
+            throw new RuntimeException("Error occurred while deleting PIT for internal plugin operation", e);
+        } catch (InterruptedException e) {
+            throw new RuntimeException("Error occurred while deleting PIT for internal plugin operation", e);
+        }
     }
-  }
-
-  @Override
-  public void schedule(Runnable task) {
-    // at that time, task already running the sql-worker ThreadPool.
-    task.run();
-  }
-
-  @Override
-  public NodeClient getNodeClient() {
-    return client;
-  }
-
-  @Override
-  public String createPit(CreatePitRequest createPitRequest) {
-    ActionFuture<CreatePitResponse> execute =
-        this.client.execute(CreatePitAction.INSTANCE, createPitRequest);
-    try {
-      CreatePitResponse pitResponse = execute.get();
-      return pitResponse.getId();
-    } catch (ExecutionException e) {
-      if (e.getCause() instanceof OpenSearchSecurityException) {
-        throw (OpenSearchSecurityException) e.getCause();
-      }
-      throw new RuntimeException(
-          "Error occurred while creating PIT for internal plugin operation", e);
-    } catch (InterruptedException e) {
-      throw new RuntimeException(
-          "Error occurred while creating PIT for internal plugin operation", e);
-    }
-  }
-
-  @Override
-  public void deletePit(DeletePitRequest deletePitRequest) {
-    ActionFuture<DeletePitResponse> execute =
-        this.client.execute(DeletePitAction.INSTANCE, deletePitRequest);
-    try {
-      execute.get();
-    } catch (ExecutionException e) {
-      if (e.getCause() instanceof OpenSearchSecurityException) {
-        throw (OpenSearchSecurityException) e.getCause();
-      }
-      throw new RuntimeException(
-          "Error occurred while deleting PIT for internal plugin operation", e);
-    } catch (InterruptedException e) {
-      throw new RuntimeException(
-          "Error occurred while deleting PIT for internal plugin operation", e);
-    }
-  }
 }

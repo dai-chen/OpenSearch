@@ -8,39 +8,39 @@
 
 package org.opensearch.querylanguages.opensearch.data.value;
 
+import org.opensearch.querylanguages.opensearch.data.type.OpenSearchBinaryType;
 import org.opensearch.sql.data.model.AbstractExprValue;
 import org.opensearch.sql.data.model.ExprValue;
 import org.opensearch.sql.data.type.ExprType;
-import org.opensearch.querylanguages.opensearch.data.type.OpenSearchBinaryType;
 
 /**
  * OpenSearch BinaryValue. Todo, add this to avoid the unknown value type exception, the
  * implementation will be changed.
  */
 public class OpenSearchExprBinaryValue extends AbstractExprValue {
-  private final String encodedString;
+    private final String encodedString;
 
-  public OpenSearchExprBinaryValue(String encodedString) {
-    this.encodedString = encodedString;
-  }
+    public OpenSearchExprBinaryValue(String encodedString) {
+        this.encodedString = encodedString;
+    }
 
-  @Override
-  public int compare(ExprValue other) {
-    return encodedString.compareTo((String) other.value());
-  }
+    @Override
+    public int compare(ExprValue other) {
+        return encodedString.compareTo((String) other.value());
+    }
 
-  @Override
-  public boolean equal(ExprValue other) {
-    return encodedString.equals(other.value());
-  }
+    @Override
+    public boolean equal(ExprValue other) {
+        return encodedString.equals(other.value());
+    }
 
-  @Override
-  public Object value() {
-    return encodedString;
-  }
+    @Override
+    public Object value() {
+        return encodedString;
+    }
 
-  @Override
-  public ExprType type() {
-    return OpenSearchBinaryType.of();
-  }
+    @Override
+    public ExprType type() {
+        return OpenSearchBinaryType.of();
+    }
 }

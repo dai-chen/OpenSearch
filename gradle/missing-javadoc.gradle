@@ -112,6 +112,7 @@ configure([
   project(":modules:geo"),
   project(":modules:ingest-common"),
   project(":modules:ingest-geoip"),
+  project(":modules:query-languages"),
   project(":modules:ingest-user-agent"),
   project(":modules:lang-expression"),
   project(":modules:lang-mustache"),

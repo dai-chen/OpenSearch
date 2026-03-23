@@ -8,18 +8,18 @@
 
 package org.opensearch.querylanguages.opensearch.data.value;
 
+import org.opensearch.querylanguages.opensearch.data.type.OpenSearchTextType;
 import org.opensearch.sql.data.model.ExprStringValue;
 import org.opensearch.sql.data.type.ExprType;
-import org.opensearch.querylanguages.opensearch.data.type.OpenSearchTextType;
 
 /** Expression Text Value, it is a extension of the ExprValue by OpenSearch. */
 public class OpenSearchExprTextValue extends ExprStringValue {
-  public OpenSearchExprTextValue(String value) {
-    super(value);
-  }
+    public OpenSearchExprTextValue(String value) {
+        super(value);
+    }
 
-  @Override
-  public ExprType type() {
-    return OpenSearchTextType.of();
-  }
+    @Override
+    public ExprType type() {
+        return OpenSearchTextType.of();
+    }
 }

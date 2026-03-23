@@ -17,32 +17,35 @@ import org.opensearch.sql.monitor.ResourceMonitor;
  * threshold, the monitor is not healthy. Todo, add metrics.
  */
 public class OpenSearchResourceMonitor extends ResourceMonitor {
-  private final Settings settings;
-  private final OpenSearchMemoryHealthy memoryMonitor;
+    private final Settings settings;
+    private final OpenSearchMemoryHealthy memoryMonitor;
 
-  /** Constructor of OpenSearchResourceMonitor. */
-  public OpenSearchResourceMonitor(Settings settings, OpenSearchMemoryHealthy memoryMonitor) {
-    this.settings = settings;
-    this.memoryMonitor = memoryMonitor;
-  }
-
-  /**
-   * Is Healthy.
-   *
-   * @return true if healthy, otherwise return false.
-   */
-  @Override
-  public boolean isHealthy() {
-    try {
-      ByteSizeValue limit = settings.getSettingValue(Settings.Key.QUERY_MEMORY_LIMIT);
-      if (limit == null) {
-        // undefined, be always healthy, this is useful in Calcite standalone ITs
-        // since AlwaysHealthyMonitor is not work within Calcite tests.
-        return true;
-      }
-      return memoryMonitor.isMemoryHealthy(limit.getBytes());
-    } catch (Exception e) {
-      return false;
+    /** Constructor of OpenSearchResourceMonitor.
+    * @param settings the settings
+    * @param memoryMonitor the memory monitor
+    */
+    public OpenSearchResourceMonitor(Settings settings, OpenSearchMemoryHealthy memoryMonitor) {
+        this.settings = settings;
+        this.memoryMonitor = memoryMonitor;
     }
-  }
+
+    /**
+     * Is Healthy.
+     *
+     * @return true if healthy, otherwise return false.
+     */
+    @Override
+    public boolean isHealthy() {
+        try {
+            ByteSizeValue limit = settings.getSettingValue(Settings.Key.QUERY_MEMORY_LIMIT);
+            if (limit == null) {
+                // undefined, be always healthy, this is useful in Calcite standalone ITs
+                // since AlwaysHealthyMonitor is not work within Calcite tests.
+                return true;
+            }
+            return memoryMonitor.isMemoryHealthy(limit.getBytes());
+        } catch (Exception e) {
+            return false;
+        }
+    }
 }

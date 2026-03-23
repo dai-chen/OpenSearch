@@ -9,19 +9,22 @@
 package org.opensearch.querylanguages.opensearch.planner.rules;
 
 import com.google.common.collect.ImmutableList;
-import java.util.List;
 import org.apache.calcite.plan.RelOptRule;
+
+import java.util.List;
 
 /** Registry of OpenSearch index scan push-down rules. */
 public class OpenSearchIndexRules {
 
-    public static final List<RelOptRule> OPEN_SEARCH_INDEX_SCAN_RULES =
-        ImmutableList.of(
-            ProjectIndexScanRule.INSTANCE,
-            FilterIndexScanRule.INSTANCE,
-            LimitIndexScanRule.INSTANCE);
+    /** Phase 1 push-down rules. */
+    public static final List<RelOptRule> OPEN_SEARCH_INDEX_SCAN_RULES = ImmutableList.of(
+        ProjectIndexScanRule.INSTANCE,
+        FilterIndexScanRule.INSTANCE,
+        LimitIndexScanRule.INSTANCE
+    );
 
     // TODO: Phase 3 - Relevance function pushdown
+    /** Relevance function pushdown rule placeholder. */
     public static final RelOptRule RELEVANCE_FUNCTION_PUSHDOWN = FilterIndexScanRule.INSTANCE;
 
     private OpenSearchIndexRules() {}

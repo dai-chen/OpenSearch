@@ -8,73 +8,93 @@
 
 package org.opensearch.querylanguages.opensearch.monitor;
 
-import com.google.common.annotations.VisibleForTesting;
-import java.util.concurrent.ThreadLocalRandom;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.opensearch.common.Randomness;
 import org.opensearch.sql.common.setting.Settings;
 
 /** OpenSearch Memory Monitor. */
 public class OpenSearchMemoryHealthy {
-  private static final Logger log = LogManager.getLogger(OpenSearchMemoryHealthy.class);
-  private final RandomFail randomFail;
-  private final MemoryUsage memoryUsage;
+    private static final Logger log = LogManager.getLogger(OpenSearchMemoryHealthy.class);
+    private final RandomFail randomFail;
+    private final MemoryUsage memoryUsage;
 
-  public OpenSearchMemoryHealthy(Settings settings) {
-    randomFail = new RandomFail();
-    memoryUsage = buildMemoryUsage(settings);
-  }
-
-  @VisibleForTesting
-  public OpenSearchMemoryHealthy(RandomFail randomFail, MemoryUsage memoryUsage) {
-    this.randomFail = randomFail;
-    this.memoryUsage = memoryUsage;
-  }
-
-  private MemoryUsage buildMemoryUsage(Settings settings) {
-    try {
-      return isCalciteEnabled(settings)
-          ? GCedMemoryUsage.getInstance()
-          : RuntimeMemoryUsage.getInstance();
-    } catch (Throwable e) {
-      return RuntimeMemoryUsage.getInstance();
+    /**
+     * Creates a new monitor with the given settings.
+     * @param settings the settings
+     */
+    public OpenSearchMemoryHealthy(Settings settings) {
+        randomFail = new RandomFail();
+        memoryUsage = buildMemoryUsage(settings);
     }
-  }
 
-  private boolean isCalciteEnabled(Settings settings) {
-    if (settings != null) {
-      return settings.getSettingValue(Settings.Key.CALCITE_ENGINE_ENABLED);
-    } else {
-      return false;
+    /**
+     * Creates a new monitor for testing.
+     * @param randomFail the random fail strategy
+     * @param memoryUsage the memory usage provider
+     */
+    public OpenSearchMemoryHealthy(RandomFail randomFail, MemoryUsage memoryUsage) {
+        this.randomFail = randomFail;
+        this.memoryUsage = memoryUsage;
     }
-  }
 
-  /** Is Memory Healthy. Calculate based on the current heap memory usage. */
-  public boolean isMemoryHealthy(long limitBytes) {
-    final long memoryUsage = this.memoryUsage.usage();
-    log.debug("Memory usage:{}, limit:{}", memoryUsage, limitBytes);
-    if (memoryUsage < limitBytes) {
-      return true;
-    } else {
-      log.warn("Memory usage:{} exceed limit:{}", memoryUsage, limitBytes);
-      if (randomFail.shouldFail()) {
-        log.warn("Fast failing the current request");
-        throw new MemoryUsageExceedFastFailureException();
-      } else {
-        throw new MemoryUsageExceedException();
-      }
+    private MemoryUsage buildMemoryUsage(Settings settings) {
+        try {
+            return isCalciteEnabled(settings) ? GCedMemoryUsage.getInstance() : RuntimeMemoryUsage.getInstance();
+        } catch (Throwable e) {
+            return RuntimeMemoryUsage.getInstance();
+        }
     }
-  }
 
-  static class RandomFail {
-    public boolean shouldFail() {
-      return ThreadLocalRandom.current().nextBoolean();
+    private boolean isCalciteEnabled(Settings settings) {
+        if (settings != null) {
+            return settings.getSettingValue(Settings.Key.CALCITE_ENGINE_ENABLED);
+        } else {
+            return false;
+        }
     }
-  }
 
-  public static class MemoryUsageExceedFastFailureException extends MemoryUsageException {}
+    /** Is Memory Healthy. Calculate based on the current heap memory usage.
+    * @param limitBytes the memory limit in bytes
+    * @return true if healthy
+    */
+    public boolean isMemoryHealthy(long limitBytes) {
+        final long memoryUsage = this.memoryUsage.usage();
+        log.debug("Memory usage:{}, limit:{}", memoryUsage, limitBytes);
+        if (memoryUsage < limitBytes) {
+            return true;
+        } else {
+            log.warn("Memory usage:{} exceed limit:{}", memoryUsage, limitBytes);
+            if (randomFail.shouldFail()) {
+                log.warn("Fast failing the current request");
+                throw new MemoryUsageExceedFastFailureException();
+            } else {
+                throw new MemoryUsageExceedException();
+            }
+        }
+    }
 
-  public static class MemoryUsageExceedException extends MemoryUsageException {}
+    static class RandomFail {
+        public boolean shouldFail() {
+            return Randomness.get().nextBoolean();
+        }
+    }
 
-  public static class MemoryUsageException extends RuntimeException {}
+    /** Fast failure when memory exceeds limit. */
+    public static class MemoryUsageExceedFastFailureException extends MemoryUsageException {
+        /** Creates instance. */
+        public MemoryUsageExceedFastFailureException() {}
+    }
+
+    /** Exception when memory exceeds limit. */
+    public static class MemoryUsageExceedException extends MemoryUsageException {
+        /** Creates instance. */
+        public MemoryUsageExceedException() {}
+    }
+
+    /** Base memory usage exception. */
+    public static class MemoryUsageException extends RuntimeException {
+        /** Creates instance. */
+        public MemoryUsageException() {}
+    }
 }

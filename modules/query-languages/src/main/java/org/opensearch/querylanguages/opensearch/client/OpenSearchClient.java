@@ -8,14 +8,15 @@
 
 package org.opensearch.querylanguages.opensearch.client;
 
-import java.util.List;
-import java.util.Map;
 import org.opensearch.action.search.CreatePitRequest;
 import org.opensearch.action.search.DeletePitRequest;
-import org.opensearch.transport.client.node.NodeClient;
 import org.opensearch.querylanguages.opensearch.mapping.IndexMapping;
 import org.opensearch.querylanguages.opensearch.request.OpenSearchRequest;
 import org.opensearch.querylanguages.opensearch.response.OpenSearchResponse;
+import org.opensearch.transport.client.node.NodeClient;
+
+import java.util.List;
+import java.util.Map;
 
 /**
  * OpenSearch client abstraction to wrap different OpenSearch client implementation. For example,
@@ -23,97 +24,97 @@ import org.opensearch.querylanguages.opensearch.response.OpenSearchResponse;
  */
 public interface OpenSearchClient {
 
-  String META_CLUSTER_NAME = "CLUSTER_NAME";
+    String META_CLUSTER_NAME = "CLUSTER_NAME";
 
-  /**
-   * Check if the given index exists.
-   *
-   * @param indexName index name
-   * @return true if exists, otherwise false
-   */
-  boolean exists(String indexName);
+    /**
+     * Check if the given index exists.
+     *
+     * @param indexName index name
+     * @return true if exists, otherwise false
+     */
+    boolean exists(String indexName);
 
-  /**
-   * Create OpenSearch index based on the given mappings.
-   *
-   * @param indexName index name
-   * @param mappings index mappings
-   */
-  void createIndex(String indexName, Map<String, Object> mappings);
+    /**
+     * Create OpenSearch index based on the given mappings.
+     *
+     * @param indexName index name
+     * @param mappings index mappings
+     */
+    void createIndex(String indexName, Map<String, Object> mappings);
 
-  /**
-   * Fetch index mapping(s) according to index expression given.
-   *
-   * @param indexExpression index expression
-   * @return index mapping(s) from index name to its mapping
-   */
-  Map<String, IndexMapping> getIndexMappings(String... indexExpression);
+    /**
+     * Fetch index mapping(s) according to index expression given.
+     *
+     * @param indexExpression index expression
+     * @return index mapping(s) from index name to its mapping
+     */
+    Map<String, IndexMapping> getIndexMappings(String... indexExpression);
 
-  /**
-   * Fetch index.max_result_window settings according to index expression given.
-   *
-   * @param indexExpression index expression
-   * @return map from index name to its max result window
-   */
-  Map<String, Integer> getIndexMaxResultWindows(String... indexExpression);
+    /**
+     * Fetch index.max_result_window settings according to index expression given.
+     *
+     * @param indexExpression index expression
+     * @return map from index name to its max result window
+     */
+    Map<String, Integer> getIndexMaxResultWindows(String... indexExpression);
 
-  /**
-   * Perform search query in the search request.
-   *
-   * @param request search request
-   * @return search response
-   */
-  OpenSearchResponse search(OpenSearchRequest request);
+    /**
+     * Perform search query in the search request.
+     *
+     * @param request search request
+     * @return search response
+     */
+    OpenSearchResponse search(OpenSearchRequest request);
 
-  /**
-   * Get the combination of the indices and the alias.
-   *
-   * @return the combination of the indices and the alias
-   */
-  List<String> indices();
+    /**
+     * Get the combination of the indices and the alias.
+     *
+     * @return the combination of the indices and the alias
+     */
+    List<String> indices();
 
-  /**
-   * Get meta info of the cluster.
-   *
-   * @return meta info of the cluster.
-   */
-  Map<String, String> meta();
+    /**
+     * Get meta info of the cluster.
+     *
+     * @return meta info of the cluster.
+     */
+    Map<String, String> meta();
 
-  /**
-   * Force to clean up resources related to the search request.
-   *
-   * @param request search request
-   */
-  void forceCleanup(OpenSearchRequest request);
+    /**
+     * Force to clean up resources related to the search request.
+     *
+     * @param request search request
+     */
+    void forceCleanup(OpenSearchRequest request);
 
-  /**
-   * Clean up resources related to the search request, for example scroll context.
-   *
-   * @param request search request
-   */
-  void cleanup(OpenSearchRequest request);
+    /**
+     * Clean up resources related to the search request, for example scroll context.
+     *
+     * @param request search request
+     */
+    void cleanup(OpenSearchRequest request);
 
-  /**
-   * Schedule a task to run.
-   *
-   * @param task task
-   */
-  void schedule(Runnable task);
+    /**
+     * Schedule a task to run.
+     *
+     * @param task task
+     */
+    void schedule(Runnable task);
 
-  NodeClient getNodeClient();
+    NodeClient getNodeClient();
 
-  /**
-   * Create PIT for given indices
-   *
-   * @param createPitRequest Create Point In Time request
-   * @return PitId
-   */
-  String createPit(CreatePitRequest createPitRequest);
+    /**
+     * Create PIT for given indices
+     *
+     * @param createPitRequest Create Point In Time request
+     * @return PitId
+     */
+    String createPit(CreatePitRequest createPitRequest);
 
-  /**
-   * Delete PIT
-   *
-   * @param deletePitRequest Delete Point In Time request
-   */
-  void deletePit(DeletePitRequest deletePitRequest);
+    /**
+     * Delete PIT
+     *
+     * @param deletePitRequest Delete Point In Time request
+     */
+    void deletePit(DeletePitRequest deletePitRequest);
 }

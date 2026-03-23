@@ -6,10 +6,9 @@
  * compatible open source license.
  */
 
+/**
+ * OpenSearch query engine bridge — utils components.
+ *
+ * @opensearch.internal
+ */
 package org.opensearch.querylanguages.opensearch.data.utils;
-
-import org.locationtech.jts.geom.GeometryFactory;
-
-public interface GeometryUtils {
-    GeometryFactory defaultFactory = new GeometryFactory();
-}

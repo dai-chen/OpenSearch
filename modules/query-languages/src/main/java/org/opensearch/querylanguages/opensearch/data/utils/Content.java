@@ -8,9 +8,10 @@
 
 package org.opensearch.querylanguages.opensearch.data.utils;
 
+import org.apache.commons.lang3.tuple.Pair;
+
 import java.util.Iterator;
 import java.util.Map;
-import org.apache.commons.lang3.tuple.Pair;
 
 /**
  * Regardless the underling data format, the {@link Content} define the data in abstract manner.
@@ -20,72 +21,72 @@ import org.apache.commons.lang3.tuple.Pair;
  */
 public interface Content {
 
-  /** Is null value. */
-  boolean isNull();
+    /** Is null value. */
+    boolean isNull();
 
-  /** Is number value. */
-  boolean isNumber();
+    /** Is number value. */
+    boolean isNumber();
 
-  /** Is float value. */
-  boolean isFloat();
+    /** Is float value. */
+    boolean isFloat();
 
-  /** Is double value. */
-  boolean isDouble();
+    /** Is double value. */
+    boolean isDouble();
 
-  /** Is short value. */
-  boolean isShort();
+    /** Is short value. */
+    boolean isShort();
 
-  /** Is byte value. */
-  boolean isByte();
+    /** Is byte value. */
+    boolean isByte();
 
-  /** Is int value. */
-  boolean isInt();
+    /** Is int value. */
+    boolean isInt();
 
-  /** Is long value. */
-  boolean isLong();
+    /** Is long value. */
+    boolean isLong();
 
-  /** Is boolean value. */
-  boolean isBoolean();
+    /** Is boolean value. */
+    boolean isBoolean();
 
-  /** Is string value. */
-  boolean isString();
+    /** Is string value. */
+    boolean isString();
 
-  /** Is array value. */
-  boolean isArray();
+    /** Is array value. */
+    boolean isArray();
 
-  /** Get integer value. */
-  Integer intValue();
+    /** Get integer value. */
+    Integer intValue();
 
-  /** Get long value. */
-  Long longValue();
+    /** Get long value. */
+    Long longValue();
 
-  /** Get short value. */
-  Short shortValue();
+    /** Get short value. */
+    Short shortValue();
 
-  /** Get byte value. */
-  Byte byteValue();
+    /** Get byte value. */
+    Byte byteValue();
 
-  /** Get float value. */
-  Float floatValue();
+    /** Get float value. */
+    Float floatValue();
 
-  /** Get double value. */
-  Double doubleValue();
+    /** Get double value. */
+    Double doubleValue();
 
-  /** Get string value. */
-  String stringValue();
+    /** Get string value. */
+    String stringValue();
 
-  /** Get boolean value. */
-  Boolean booleanValue();
+    /** Get boolean value. */
+    Boolean booleanValue();
 
-  /** Get map of {@link Content} value. */
-  Iterator<Map.Entry<String, Content>> map();
+    /** Get map of {@link Content} value. */
+    Iterator<Map.Entry<String, Content>> map();
 
-  /** Get array of {@link Content} value. */
-  Iterator<? extends Content> array();
+    /** Get array of {@link Content} value. */
+    Iterator<? extends Content> array();
 
-  /** Get geo point value. */
-  Pair<Double, Double> geoValue();
+    /** Get geo point value. */
+    Pair<Double, Double> geoValue();
 
-  /** Get {@link Object} value. */
-  Object objectValue();
+    /** Get {@link Object} value. */
+    Object objectValue();
 }

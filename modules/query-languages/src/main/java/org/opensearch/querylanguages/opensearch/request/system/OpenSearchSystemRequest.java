@@ -8,16 +8,17 @@
 
 package org.opensearch.querylanguages.opensearch.request.system;
 
-import java.util.List;
 import org.opensearch.sql.data.model.ExprValue;
+
+import java.util.List;
 
 /** OpenSearch system request query against the system index. */
 public interface OpenSearchSystemRequest {
 
-  /**
-   * Search.
-   *
-   * @return list of ExprValue.
-   */
-  List<ExprValue> search();
+    /**
+     * Search.
+     *
+     * @return list of ExprValue.
+     */
+    List<ExprValue> search();
 }

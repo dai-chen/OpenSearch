@@ -8,21 +8,28 @@
 
 package org.opensearch.querylanguages.opensearch.response.agg;
 
-import java.util.List;
-import java.util.Map;
 import org.opensearch.search.SearchHits;
 import org.opensearch.search.aggregations.Aggregations;
+
+import java.util.List;
+import java.util.Map;
 
 /** OpenSearch Aggregation Response Parser. */
 public interface OpenSearchAggregationResponseParser {
 
-  /**
-   * Parse the OpenSearch Aggregation Response.
-   *
-   * @param aggregations Aggregations.
-   * @return aggregation result.
-   */
-  List<Map<String, Object>> parse(Aggregations aggregations);
+    /**
+     * Parse the OpenSearch Aggregation Response.
+     *
+     * @param aggregations Aggregations.
+     * @return aggregation result.
+     */
+    List<Map<String, Object>> parse(Aggregations aggregations);
 
-  List<Map<String, Object>> parse(SearchHits hit);
+    /**
+     * Parse the search hits response.
+     *
+     * @param hit the search hits
+     * @return parsed result
+     */
+    List<Map<String, Object>> parse(SearchHits hit);
 }

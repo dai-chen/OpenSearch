@@ -8,17 +8,18 @@
 
 package org.opensearch.querylanguages.opensearch.storage.scan;
 
-import java.util.Collections;
-import java.util.Iterator;
-import java.util.List;
 import org.apache.calcite.linq4j.Enumerator;
+import org.opensearch.querylanguages.opensearch.client.OpenSearchClient;
+import org.opensearch.querylanguages.opensearch.request.OpenSearchRequest;
+import org.opensearch.querylanguages.opensearch.response.OpenSearchResponse;
 import org.opensearch.sql.data.model.ExprValue;
 import org.opensearch.sql.data.model.ExprValueUtils;
 import org.opensearch.sql.exception.NonFallbackCalciteException;
 import org.opensearch.sql.monitor.ResourceMonitor;
-import org.opensearch.querylanguages.opensearch.client.OpenSearchClient;
-import org.opensearch.querylanguages.opensearch.request.OpenSearchRequest;
-import org.opensearch.querylanguages.opensearch.response.OpenSearchResponse;
+
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
 
 /**
  * Supports a simple iteration over a collection for OpenSearch index
@@ -29,128 +30,127 @@ import org.opensearch.querylanguages.opensearch.response.OpenSearchResponse;
  */
 public class OpenSearchIndexEnumerator implements Enumerator<Object> {
 
-  /** OpenSearch client. */
-  private final OpenSearchClient client;
+    /** OpenSearch client. */
+    private final OpenSearchClient client;
 
-  private final List<String> fields;
+    private final List<String> fields;
 
-  /** Search request. */
-  private OpenSearchRequest request;
+    /** Search request. */
+    private OpenSearchRequest request;
 
-  /** Largest number of rows allowed in the response. */
-  private final int maxResponseSize;
+    /** Largest number of rows allowed in the response. */
+    private final int maxResponseSize;
 
-  /** Largest number of rows allowed in the response. */
-  private final int maxResultWindow;
+    /** Largest number of rows allowed in the response. */
+    private final int maxResultWindow;
 
-  /** How many moveNext() calls to perform resource check once. */
-  private static final long NUMBER_OF_NEXT_CALL_TO_CHECK = 1000;
+    /** How many moveNext() calls to perform resource check once. */
+    private static final long NUMBER_OF_NEXT_CALL_TO_CHECK = 1000;
 
-  /** ResourceMonitor. */
-  private final ResourceMonitor monitor;
+    /** ResourceMonitor. */
+    private final ResourceMonitor monitor;
 
-  /** Number of rows returned. */
-  private Integer queryCount;
+    /** Number of rows returned. */
+    private Integer queryCount;
 
-  /** Search response for current batch. */
-  private Iterator<ExprValue> iterator;
+    /** Search response for current batch. */
+    private Iterator<ExprValue> iterator;
 
-  private ExprValue current;
+    private ExprValue current;
 
-  /** flag to indicate whether fetch more than one batch */
-  private boolean fetchOnce = false;
+    /** flag to indicate whether fetch more than one batch */
+    private boolean fetchOnce = false;
 
-  public OpenSearchIndexEnumerator(
-      OpenSearchClient client,
-      List<String> fields,
-      int maxResponseSize,
-      int maxResultWindow,
-      OpenSearchRequest request,
-      ResourceMonitor monitor) {
-    this.client = client;
-    this.fields = fields;
-    this.request = request;
-    this.maxResponseSize = maxResponseSize;
-    this.maxResultWindow = maxResultWindow;
-    this.monitor = monitor;
-    this.queryCount = 0;
-    this.current = null;
-    if (!this.monitor.isHealthy()) {
-      throw new NonFallbackCalciteException("insufficient resources to run the query, quit.");
-    }
-  }
-
-  private void fetchNextBatch() {
-    OpenSearchResponse response = client.search(request);
-    if (response.isAggregationResponse()
-        || response.isCountResponse()
-        || response.getHitsSize() < maxResultWindow) {
-      // no need to fetch next batch if it's for an aggregation
-      // or the length of response hits is less than max result window size.
-      fetchOnce = true;
-    }
-    if (!response.isEmpty()) {
-      iterator = response.iterator();
-    } else if (iterator == null) {
-      iterator = Collections.emptyIterator();
-    }
-  }
-
-  @Override
-  public Object current() {
-    /* In Calcite enumerable operators, row of single column will be optimized to a scalar value.
-     * See {@link PhysTypeImpl}
-     */
-    if (fields.size() == 1) {
-      return resolveForCalcite(current, fields.get(0));
-    }
-    return fields.stream().map(field -> resolveForCalcite(current, field)).toArray();
-  }
-
-  private Object resolveForCalcite(ExprValue value, String rawPath) {
-    return ExprValueUtils.resolveRefPaths(value, List.of(rawPath.split("\\."))).valueForCalcite();
-  }
-
-  @Override
-  public boolean moveNext() {
-    if (queryCount >= maxResponseSize) {
-      return false;
+    public OpenSearchIndexEnumerator(
+        OpenSearchClient client,
+        List<String> fields,
+        int maxResponseSize,
+        int maxResultWindow,
+        OpenSearchRequest request,
+        ResourceMonitor monitor
+    ) {
+        this.client = client;
+        this.fields = fields;
+        this.request = request;
+        this.maxResponseSize = maxResponseSize;
+        this.maxResultWindow = maxResultWindow;
+        this.monitor = monitor;
+        this.queryCount = 0;
+        this.current = null;
+        if (!this.monitor.isHealthy()) {
+            throw new NonFallbackCalciteException("insufficient resources to run the query, quit.");
+        }
     }
 
-    boolean shouldCheck = (queryCount % NUMBER_OF_NEXT_CALL_TO_CHECK == 0);
-    if (shouldCheck && !this.monitor.isHealthy()) {
-      throw new NonFallbackCalciteException("insufficient resources to load next row, quit.");
+    private void fetchNextBatch() {
+        OpenSearchResponse response = client.search(request);
+        if (response.isAggregationResponse() || response.isCountResponse() || response.getHitsSize() < maxResultWindow) {
+            // no need to fetch next batch if it's for an aggregation
+            // or the length of response hits is less than max result window size.
+            fetchOnce = true;
+        }
+        if (!response.isEmpty()) {
+            iterator = response.iterator();
+        } else if (iterator == null) {
+            iterator = Collections.emptyIterator();
+        }
     }
 
-    if (iterator == null || (!iterator.hasNext() && !fetchOnce)) {
-      fetchNextBatch();
+    @Override
+    public Object current() {
+        /* In Calcite enumerable operators, row of single column will be optimized to a scalar value.
+         * See {@link PhysTypeImpl}
+         */
+        if (fields.size() == 1) {
+            return resolveForCalcite(current, fields.get(0));
+        }
+        return fields.stream().map(field -> resolveForCalcite(current, field)).toArray();
     }
-    if (iterator.hasNext()) {
-      current = iterator.next();
-      queryCount++;
-      return true;
-    } else {
-      return false;
-    }
-  }
 
-  @Override
-  public void reset() {
-    OpenSearchResponse response = client.search(request);
-    if (!response.isEmpty()) {
-      iterator = response.iterator();
-    } else {
-      iterator = Collections.emptyIterator();
+    private Object resolveForCalcite(ExprValue value, String rawPath) {
+        return ExprValueUtils.resolveRefPaths(value, List.of(rawPath.split("\\."))).valueForCalcite();
     }
-    queryCount = 0;
-  }
 
-  @Override
-  public void close() {
-    iterator = Collections.emptyIterator();
-    if (request != null) {
-      client.forceCleanup(request);
-      request = null;
+    @Override
+    public boolean moveNext() {
+        if (queryCount >= maxResponseSize) {
+            return false;
+        }
+
+        boolean shouldCheck = (queryCount % NUMBER_OF_NEXT_CALL_TO_CHECK == 0);
+        if (shouldCheck && !this.monitor.isHealthy()) {
+            throw new NonFallbackCalciteException("insufficient resources to load next row, quit.");
+        }
+
+        if (iterator == null || (!iterator.hasNext() && !fetchOnce)) {
+            fetchNextBatch();
+        }
+        if (iterator.hasNext()) {
+            current = iterator.next();
+            queryCount++;
+            return true;
+        } else {
+            return false;
+        }
     }
-  }
+
+    @Override
+    public void reset() {
+        OpenSearchResponse response = client.search(request);
+        if (!response.isEmpty()) {
+            iterator = response.iterator();
+        } else {
+            iterator = Collections.emptyIterator();
+        }
+        queryCount = 0;
+    }
+
+    @Override
+    public void close() {
+        iterator = Collections.emptyIterator();
+        if (request != null) {
+            client.forceCleanup(request);
+            request = null;
+        }
+    }
 }

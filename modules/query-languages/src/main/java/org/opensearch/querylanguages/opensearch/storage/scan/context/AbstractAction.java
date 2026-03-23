@@ -14,13 +14,13 @@ package org.opensearch.querylanguages.opensearch.storage.scan.context;
  * @param <T> the target type
  */
 public interface AbstractAction<T> {
-  void apply(T target);
+    void apply(T target);
 
-  /**
-   * Apply the action on the target T and add the operation to the context
-   *
-   * @param context the context to add the operation to
-   * @param operation the operation to add to the context
-   */
-  void transform(PushDownContext context, PushDownOperation operation);
+    /**
+     * Apply the action on the target T and add the operation to the context
+     *
+     * @param context the context to add the operation to
+     * @param operation the operation to add to the context
+     */
+    void transform(PushDownContext context, PushDownOperation operation);
 }

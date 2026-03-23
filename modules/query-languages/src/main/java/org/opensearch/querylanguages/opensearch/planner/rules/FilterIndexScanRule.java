@@ -17,14 +17,11 @@ import org.opensearch.querylanguages.opensearch.storage.scan.CalciteLogicalIndex
 /** Planner rule that pushes a {@link LogicalFilter} down to {@link CalciteLogicalIndexScan}. */
 public class FilterIndexScanRule extends RelOptRule {
 
+    /** Singleton instance. */
     public static final FilterIndexScanRule INSTANCE = new FilterIndexScanRule();
 
     private FilterIndexScanRule() {
-        super(
-            operand(
-                LogicalFilter.class,
-                operand(CalciteLogicalIndexScan.class, none())),
-            "FilterIndexScanRule");
+        super(operand(LogicalFilter.class, operand(CalciteLogicalIndexScan.class, none())), "FilterIndexScanRule");
     }
 
     @Override

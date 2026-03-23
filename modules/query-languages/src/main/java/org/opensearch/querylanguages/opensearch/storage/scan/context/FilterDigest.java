@@ -10,26 +10,25 @@ package org.opensearch.querylanguages.opensearch.storage.scan.context;
 
 import org.apache.calcite.rex.RexNode;
 
-
 public class FilterDigest {
-  private final int scriptCount;
-  private final RexNode condition;
+    private final int scriptCount;
+    private final RexNode condition;
 
-  public FilterDigest(int scriptCount, RexNode condition) {
-    this.scriptCount = scriptCount;
-    this.condition = condition;
-  }
+    public FilterDigest(int scriptCount, RexNode condition) {
+        this.scriptCount = scriptCount;
+        this.condition = condition;
+    }
 
-  public int scriptCount() {
-    return scriptCount;
-  }
+    public int scriptCount() {
+        return scriptCount;
+    }
 
-  public RexNode condition() {
-    return condition;
-  }
+    public RexNode condition() {
+        return condition;
+    }
 
-  @Override
-  public String toString() {
-    return condition.toString();
-  }
+    @Override
+    public String toString() {
+        return condition.toString();
+    }
 }

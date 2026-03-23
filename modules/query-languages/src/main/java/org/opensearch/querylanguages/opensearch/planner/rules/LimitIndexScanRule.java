@@ -8,15 +8,16 @@
 
 package org.opensearch.querylanguages.opensearch.planner.rules;
 
-import java.util.Objects;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.rel.AbstractRelNode;
 import org.apache.calcite.rel.logical.LogicalSort;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
-import org.opensearch.sql.calcite.utils.PlanUtils;
 import org.opensearch.querylanguages.opensearch.storage.scan.CalciteLogicalIndexScan;
+import org.opensearch.sql.calcite.utils.PlanUtils;
+
+import java.util.Objects;
 
 /**
  * Planner rule that pushes a {@link LogicalSort} with LIMIT semantics down to
@@ -24,14 +25,11 @@ import org.opensearch.querylanguages.opensearch.storage.scan.CalciteLogicalIndex
  */
 public class LimitIndexScanRule extends RelOptRule {
 
+    /** Singleton instance. */
     public static final LimitIndexScanRule INSTANCE = new LimitIndexScanRule();
 
     private LimitIndexScanRule() {
-        super(
-            operand(
-                LogicalSort.class,
-                operand(CalciteLogicalIndexScan.class, none())),
-            "LimitIndexScanRule");
+        super(operand(LogicalSort.class, operand(CalciteLogicalIndexScan.class, none())), "LimitIndexScanRule");
     }
 
     @Override
@@ -42,8 +40,7 @@ public class LimitIndexScanRule extends RelOptRule {
         }
         final CalciteLogicalIndexScan scan = call.rel(1);
 
-        if (!sort.getCollation().getFieldCollations().isEmpty()
-            && sort.getCollation() != scan.getTraitSet().getCollation()) {
+        if (!sort.getCollation().getFieldCollations().isEmpty() && sort.getCollation() != scan.getTraitSet().getCollation()) {
             return;
         }
 

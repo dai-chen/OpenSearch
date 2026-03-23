@@ -8,9 +8,10 @@
 
 package org.opensearch.querylanguages.opensearch.mapping;
 
-import java.util.Map;
 import org.opensearch.cluster.metadata.MappingMetadata;
 import org.opensearch.querylanguages.opensearch.data.type.OpenSearchDataType;
+
+import java.util.Map;
 
 /**
  * OpenSearch index mapping. Because there is no specific behavior for different field types, string
@@ -18,31 +19,32 @@ import org.opensearch.querylanguages.opensearch.data.type.OpenSearchDataType;
  */
 public class IndexMapping {
 
-  /** Field mappings from field name to field type in OpenSearch date type system. */
-  private final Map<String, OpenSearchDataType> fieldMappings;
+    /** Field mappings from field name to field type in OpenSearch date type system. */
+    private final Map<String, OpenSearchDataType> fieldMappings;
 
-  /**
-   * Maps each column in the index definition to an OpenSearchSQL datatype.
-   *
-   * @param metaData The metadata retrieved from the index mapping defined by the user.
-   */
-  @SuppressWarnings("unchecked")
-  public IndexMapping(MappingMetadata metaData) {
-    this.fieldMappings =
-        OpenSearchDataType.parseMapping(
-            (Map<String, Object>) metaData.getSourceAsMap().getOrDefault("properties", null));
-  }
+    /**
+     * Maps each column in the index definition to an OpenSearchSQL datatype.
+     *
+     * @param metaData The metadata retrieved from the index mapping defined by the user.
+     */
+    @SuppressWarnings("unchecked")
+    public IndexMapping(MappingMetadata metaData) {
+        this.fieldMappings = OpenSearchDataType.parseMapping(
+            (Map<String, Object>) metaData.getSourceAsMap().getOrDefault("properties", null)
+        );
+    }
 
-  /**
-   * How many fields in the index (after flatten).
-   *
-   * @return field size
-   */
-  public int size() {
-    return fieldMappings.size();
-  }
+    /**
+     * How many fields in the index (after flatten).
+     *
+     * @return field size
+     */
+    public int size() {
+        return fieldMappings.size();
+    }
 
-  public Map<String, OpenSearchDataType> getFieldMappings() {
-    return fieldMappings;
-  }
+    /** Returns the field mappings. */
+    public Map<String, OpenSearchDataType> getFieldMappings() {
+        return fieldMappings;
+    }
 }
