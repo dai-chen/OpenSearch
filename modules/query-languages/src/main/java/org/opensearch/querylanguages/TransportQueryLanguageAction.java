@@ -68,6 +68,10 @@ public class TransportQueryLanguageAction extends HandledTransportAction<QueryLa
 
     @Override
     protected void doExecute(Task task, QueryLanguageRequest request, ActionListener<QueryLanguageResponse> listener) {
+        nodeClient.threadPool().executor("sql_background_io").execute(() -> doExecuteOnWorker(request, listener));
+    }
+
+    private void doExecuteOnWorker(QueryLanguageRequest request, ActionListener<QueryLanguageResponse> listener) {
         try {
             OpenSearchNodeClient osClient = new OpenSearchNodeClient(nodeClient);
             Settings settings = new HardcodedSettings();
