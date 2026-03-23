@@ -16,11 +16,13 @@ import java.util.List;
 /** Registry of OpenSearch index scan push-down rules. */
 public class OpenSearchIndexRules {
 
-    /** Phase 1 push-down rules. */
+    /** Push-down rules for filter, project, limit, and aggregation. */
     public static final List<RelOptRule> OPEN_SEARCH_INDEX_SCAN_RULES = ImmutableList.of(
         ProjectIndexScanRule.INSTANCE,
         FilterIndexScanRule.INSTANCE,
-        LimitIndexScanRule.INSTANCE
+        LimitIndexScanRule.INSTANCE,
+        AggregateIndexScanRule.DEFAULT,
+        AggregateIndexScanRule.COUNT_STAR
     );
 
     // TODO: Phase 3 - Relevance function pushdown

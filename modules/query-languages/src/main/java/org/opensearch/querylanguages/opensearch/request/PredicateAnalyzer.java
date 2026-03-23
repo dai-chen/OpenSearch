@@ -1413,6 +1413,14 @@ public class PredicateAnalyzer {
             throw new UnsupportedOperationException("Script filters not yet supported in core");
         }
 
+        /**
+         * Get the script for this expression.
+         * @return the script
+         */
+        public org.opensearch.script.Script getScript() {
+            throw new UnsupportedOperationException("Script filters not yet supported in core");
+        }
+
         @Override
         public List<RexNode> getAnalyzedNodes() {
             return analyzedNode == null ? List.of() : List.of(analyzedNode);
