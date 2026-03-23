@@ -132,6 +132,21 @@ dependencies {
   // commons-codec — required by Calcite's BuiltInMethod static initializer at runtime
   runtimeOnly "commons-codec:commons-codec:${versions.commonscodec}"
 
+  // Avatica transitive runtime deps needed by BuiltInConnectionProperty
+  runtimeOnly "org.apache.httpcomponents.core5:httpcore5:5.4"
+  runtimeOnly "org.apache.httpcomponents.core5:httpcore5-h2:5.4"
+
+  // Calcite code generation — required at runtime for Enumerable pipeline
+  runtimeOnly "org.codehaus.janino:janino:3.1.12"
+  runtimeOnly "org.codehaus.janino:commons-compiler:3.1.12"
+
+  // Calcite transitive runtime deps needed by BuiltInMethod static initializer
+  runtimeOnly "org.jooq:joou-java-6:0.9.4"
+  runtimeOnly "com.jayway.jsonpath:json-path:2.9.0"
+  runtimeOnly "net.minidev:json-smart:2.5.2"
+  runtimeOnly "net.minidev:accessors-smart:2.5.2"
+  runtimeOnly "org.ow2.asm:asm:9.7.1"
+
   // Jackson databind — needed by OpenSearchExprValueFactory at runtime
   implementation "com.fasterxml.jackson.core:jackson-databind:${versions.jackson_databind}"
   implementation "com.fasterxml.jackson.core:jackson-annotations:${versions.jackson_annotations}"
@@ -143,6 +158,8 @@ dependencyLicenses {
   mapping from: /calcite-.*/, to: 'calcite'
   mapping from: /guava-.*/, to: 'guava'
   mapping from: /jackson-.*/, to: 'jackson'
+  mapping from: /httpcore5-.*/, to: 'httpcore5'
+  mapping from: /joou-java-.*/, to: 'joou-java'
 }
 
 // Exclude okhttp-aws-signer globally (only published on JitPack, not needed)
@@ -178,6 +195,35 @@ thirdPartyAudit.ignoreMissingClasses(
   'org.apache.tools.ant.taskdefs.compilers.DefaultCompilerAdapter',
   'org.apache.tools.ant.taskdefs.Javac',
   'org.apache.tools.ant.types.Path',
+  // Jakarta JSON — optional dep of json-path
+  'jakarta.json.JsonArray',
+  'jakarta.json.JsonArrayBuilder',
+  'jakarta.json.JsonBuilderFactory',
+  'jakarta.json.JsonNumber',
+  'jakarta.json.JsonObject',
+  'jakarta.json.JsonObjectBuilder',
+  'jakarta.json.JsonReader',
+  'jakarta.json.JsonString',
+  'jakarta.json.JsonStructure',
+  'jakarta.json.JsonValue',
+  'jakarta.json.JsonValue$ValueType',
+  'jakarta.json.bind.Jsonb',
+  'jakarta.json.bind.JsonbBuilder',
+  'jakarta.json.bind.JsonbConfig',
+  'jakarta.json.spi.JsonProvider',
+  'jakarta.json.stream.JsonLocation',
+  'jakarta.json.stream.JsonParser',
+  'jakarta.json.stream.JsonParser$Event',
+  // Tapestry/Jettison — optional deps of json-path
+  'org.apache.tapestry5.json.JSONArray',
+  'org.apache.tapestry5.json.JSONCollection',
+  'org.apache.tapestry5.json.JSONObject',
+  'org.codehaus.jettison.json.JSONArray',
+  'org.codehaus.jettison.json.JSONException',
+  'org.codehaus.jettison.json.JSONObject',
+  'org.codehaus.jettison.json.JSONTokener',
+  // Conscrypt — optional dep of httpcore5
+  'org.conscrypt.Conscrypt',
   // JTS — provided by server
   'org.locationtech.jts.algorithm.InteriorPoint',
   'org.locationtech.jts.geom.util.GeometryFixer',
