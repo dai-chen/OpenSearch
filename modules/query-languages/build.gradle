@@ -126,6 +126,12 @@ dependencies {
   // Calcite bytecode references @Immutable from immutables
   compileOnly 'org.immutables:value-annotations:2.8.8'
 
+  // SLF4J — required by Calcite at runtime
+  runtimeOnly "org.slf4j:slf4j-api:${versions.slf4j}"
+
+  // commons-codec — required by Calcite's BuiltInMethod static initializer at runtime
+  runtimeOnly "commons-codec:commons-codec:${versions.commonscodec}"
+
   // Jackson databind — needed by OpenSearchExprValueFactory at runtime
   implementation "com.fasterxml.jackson.core:jackson-databind:${versions.jackson_databind}"
   implementation "com.fasterxml.jackson.core:jackson-annotations:${versions.jackson_annotations}"
@@ -168,11 +174,6 @@ configurations.all {
 }
 
 thirdPartyAudit.ignoreMissingClasses(
-  // Commons codec — provided by server
-  'org.apache.commons.codec.binary.Base32',
-  'org.apache.commons.codec.binary.Hex',
-  'org.apache.commons.codec.digest.DigestUtils',
-  'org.apache.commons.codec.language.Soundex',
   // Ant — optional compile dependency of janino
   'org.apache.tools.ant.taskdefs.compilers.DefaultCompilerAdapter',
   'org.apache.tools.ant.taskdefs.Javac',
@@ -183,13 +184,8 @@ thirdPartyAudit.ignoreMissingClasses(
   'org.locationtech.jts.operation.buffer.OffsetCurve',
   'org.locationtech.jts.triangulate.polygon.ConstrainedDelaunayTriangulator',
   'org.locationtech.jts.triangulate.tri.Tri',
-  // SLF4J — provided by server
-  'org.slf4j.Logger',
-  'org.slf4j.LoggerFactory',
-  'org.slf4j.Marker',
-  'org.slf4j.MarkerFactory',
-  'org.slf4j.helpers.FormattingTuple',
-  'org.slf4j.helpers.MessageFormatter',
+  // JTS — provided by server
+  'org.locationtech.jts.algorithm.InteriorPoint',
 )
 
 thirdPartyAudit.ignoreViolations(
