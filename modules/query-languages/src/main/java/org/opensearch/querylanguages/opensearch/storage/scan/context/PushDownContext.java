@@ -160,4 +160,19 @@ public class PushDownContext extends AbstractCollection<PushDownOperation> {
     public boolean isTopKPushed() {
         return isTopKPushed;
     }
+
+    /**
+     * Get the digest for a specific push-down type.
+     *
+     * @param type the push-down type
+     * @return the digest object, or null if not found
+     */
+    public Object getDigestByType(PushDownType type) {
+        for (PushDownOperation op : this) {
+            if (op.type() == type) {
+                return op.digest();
+            }
+        }
+        return null;
+    }
 }

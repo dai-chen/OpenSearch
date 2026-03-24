@@ -52,6 +52,11 @@
 - `Frameworks.newConfigBuilder(baseConfig)` can override parser config from existing FrameworkConfig
 - `UnifiedQueryCompiler.compile()` accepts any RelNode regardless of source (PPL or Calcite SQL planner)
 
+## Discovered Patterns (US-009)
+- SNAPSHOT jar SHAs change upstream — delete `.sha1` files and run `updateShas` to regenerate (task won't overwrite existing)
+- Always close ResultSet/PreparedStatement after query execution to release PIT contexts — MockSearchService asserts no in-flight contexts
+- `String.format` and `toLowerCase` must use `Locale.ROOT` — enforced by `forbiddenApisMain`
+
 ## GUARDRAILS — DO NOT VIOLATE
 - ONLY modify files inside `modules/query-languages/` (exception: `settings.gradle` for module registration in US-001 only)
 - Do NOT modify any existing module, plugin, or server code
@@ -252,3 +257,20 @@ The likely fix is:
 5. Add `@SuppressWarnings({"unchecked", "rawtypes"})` if needed for warnings-as-errors
 6. Run `./gradlew :modules:query-languages:check` to verify all passes
 Do NOT re-copy or re-create the rule files — they're already there, just need check fixes.
+
+## 2026-03-24T01:27 - US-009 (Phase 3: Sort/rare/top/relevance rules — COMPLETE)
+- Fixed forbidden API violations in RelevanceFunctionPushdownRule:
+  - `String.format(...)` → `String.format(Locale.ROOT, ...)`
+  - `.toLowerCase()` → `.toLowerCase(Locale.ROOT)`
+- Updated SNAPSHOT SHA files (unified-query-ppl, unified-query-core, unified-query-api) — upstream artifacts changed
+- Fixed PIT context leak in TransportQueryLanguageAction: ResultSet and PreparedStatement now properly closed via try-with-resources/finally, preventing in-flight PitReaderContext assertion failures in SQL IT
+- Files changed:
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/opensearch/planner/rules/RelevanceFunctionPushdownRule.java` — Locale.ROOT fixes
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/TransportQueryLanguageAction.java` — ResultSet/PreparedStatement cleanup
+  - `modules/query-languages/licenses/unified-query-*.sha1` — updated SHAs for changed SNAPSHOT jars
+- **Verified**: `./gradlew :modules:query-languages:check` passes, all ITs pass
+- **Learnings for future iterations:**
+  - SNAPSHOT jar SHAs can change upstream at any time — if `dependencyLicenses` fails with SHA mismatch, delete the `.sha1` files and run `updateShas` (the gradle task may not overwrite existing files)
+  - PIT contexts MUST be cleaned up after query execution — close ResultSet and PreparedStatement to trigger PIT deletion, otherwise MockSearchService will assert in-flight context failures
+  - The SQL path creates PIT contexts during scan execution; PPL may or may not depending on the query plan
+---

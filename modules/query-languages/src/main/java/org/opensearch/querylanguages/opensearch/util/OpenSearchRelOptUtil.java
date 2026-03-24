@@ -8,6 +8,10 @@
 
 package org.opensearch.querylanguages.opensearch.util;
 
+import org.apache.calcite.rel.RelCollation;
+import org.apache.calcite.rel.RelFieldCollation;
+import org.apache.calcite.rel.RelFieldCollation.Direction;
+import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeField;
@@ -24,6 +28,9 @@ import org.apache.calcite.sql.type.SqlTypeUtil;
 import org.apache.calcite.util.mapping.Mapping;
 import org.apache.calcite.util.mapping.Mappings;
 import org.apache.commons.lang3.tuple.Pair;
+import org.opensearch.querylanguages.opensearch.storage.scan.AbstractCalciteIndexScan;
+import org.opensearch.querylanguages.opensearch.storage.scan.context.PushDownType;
+import org.opensearch.querylanguages.opensearch.storage.scan.context.SortExprDigest;
 import org.opensearch.sql.calcite.utils.OpenSearchTypeFactory;
 
 import java.math.BigDecimal;
@@ -31,6 +38,7 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -285,5 +293,84 @@ public class OpenSearchRelOptUtil {
             }
             suffix++;
         }
+    }
+
+    /**
+     * Check if source collation satisfies target collation given order equivalence info.
+     *
+     * @param sourceFieldCollation source field collation
+     * @param targetFieldCollation target field collation
+     * @param orderEquivInfo equivalent order information
+     * @return true if source satisfies target
+     */
+    public static boolean sourceCollationSatisfiesTargetCollation(
+        RelFieldCollation sourceFieldCollation,
+        RelFieldCollation targetFieldCollation,
+        Optional<Pair<Integer, Boolean>> orderEquivInfo
+    ) {
+        if (orderEquivInfo.isEmpty()) {
+            return false;
+        }
+        int equivalentSourceIndex = orderEquivInfo.get().getLeft();
+        Direction equivalentSourceDirection = orderEquivInfo.get().getRight()
+            ? targetFieldCollation.getDirection().reverse()
+            : targetFieldCollation.getDirection();
+        return equivalentSourceIndex == sourceFieldCollation.getFieldIndex()
+            && equivalentSourceDirection == sourceFieldCollation.getDirection();
+    }
+
+    /**
+     * Check if the scan can provide the required sort collation.
+     *
+     * @param scan the scan RelNode
+     * @param project the project node
+     * @param toCollation the required collation
+     * @param orderEquivInfoMap order equivalence info map
+     * @return true if scan can provide the collation
+     */
+    @SuppressWarnings("unchecked")
+    public static boolean canScanProvideSortCollation(
+        AbstractCalciteIndexScan scan,
+        Project project,
+        RelCollation toCollation,
+        Map<Integer, Optional<Pair<Integer, Boolean>>> orderEquivInfoMap
+    ) {
+        if (scan.getPushDownContext().stream().noneMatch(operation -> operation.type() == PushDownType.SORT_EXPR)) {
+            return false;
+        }
+        List<SortExprDigest> sortExprDigests = (List<SortExprDigest>) scan.getPushDownContext().getDigestByType(PushDownType.SORT_EXPR);
+        if (sortExprDigests.isEmpty() || sortExprDigests.size() < toCollation.getFieldCollations().size()) {
+            return false;
+        }
+        for (int i = 0; i < toCollation.getFieldCollations().size(); i++) {
+            RelFieldCollation requiredFieldCollation = toCollation.getFieldCollations().get(i);
+            RexNode projectExpr = project.getProjects().get(requiredFieldCollation.getFieldIndex());
+            SortExprDigest scanSortInfo = sortExprDigests.get(i);
+            RexNode scanSortExpression = scanSortInfo.getEffectiveExpression(scan);
+            if (scanSortExpression != null && scanSortExpression.equals(projectExpr)) {
+                if (requiredFieldCollation.getDirection() == scanSortInfo.getDirection()
+                    && requiredFieldCollation.nullDirection == scanSortInfo.getNullDirection()) {
+                    continue;
+                }
+                return false;
+            }
+            if (scanSortExpression instanceof RexInputRef && projectExpr instanceof RexCall) {
+                RexInputRef scanInputRef = (RexInputRef) scanSortExpression;
+                RelFieldCollation sourceCollation = new RelFieldCollation(
+                    scanInputRef.getIndex(),
+                    scanSortInfo.getDirection(),
+                    scanSortInfo.getNullDirection()
+                );
+                if (sourceCollationSatisfiesTargetCollation(
+                    sourceCollation,
+                    requiredFieldCollation,
+                    orderEquivInfoMap.get(requiredFieldCollation.getFieldIndex())
+                )) {
+                    continue;
+                }
+            }
+            return false;
+        }
+        return true;
     }
 }

@@ -25,7 +25,10 @@ public class OpenSearchIndexRules {
         AggregateIndexScanRule.COUNT_STAR,
         SortIndexScanRule.INSTANCE,
         SortAggregateMeasureRule.INSTANCE,
-        RareTopPushdownRule.INSTANCE
+        RareTopPushdownRule.INSTANCE,
+        DedupPushdownRule.INSTANCE,
+        SortProjectExprTransposeRule.INSTANCE,
+        ExpandCollationOnProjectExprRule.INSTANCE
     );
 
     /** Relevance function pushdown rule (match, match_phrase, etc.). */

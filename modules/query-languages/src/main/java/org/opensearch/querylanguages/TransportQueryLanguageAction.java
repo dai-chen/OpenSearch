@@ -21,9 +21,7 @@ import org.apache.calcite.tools.Planner;
 import org.opensearch.action.support.ActionFilters;
 import org.opensearch.action.support.HandledTransportAction;
 import org.opensearch.common.inject.Inject;
-import org.opensearch.common.unit.TimeValue;
 import org.opensearch.core.action.ActionListener;
-import org.opensearch.core.common.unit.ByteSizeValue;
 import org.opensearch.querylanguages.opensearch.client.OpenSearchNodeClient;
 import org.opensearch.querylanguages.opensearch.storage.OpenSearchIndex;
 import org.opensearch.sql.api.UnifiedQueryContext;
@@ -39,7 +37,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +49,7 @@ import java.util.Map;
 public class TransportQueryLanguageAction extends HandledTransportAction<QueryLanguageRequest, QueryLanguageResponse> {
 
     private final NodeClient nodeClient;
+    private final OpenSearchSettings openSearchSettings;
 
     /**
      * Creates a new transport action.
@@ -59,11 +57,18 @@ public class TransportQueryLanguageAction extends HandledTransportAction<QueryLa
      * @param transportService the transport service
      * @param actionFilters the action filters
      * @param nodeClient the node client for OpenSearch operations
+     * @param openSearchSettings the cluster-settings-wired settings
      */
     @Inject
-    public TransportQueryLanguageAction(TransportService transportService, ActionFilters actionFilters, NodeClient nodeClient) {
+    public TransportQueryLanguageAction(
+        TransportService transportService,
+        ActionFilters actionFilters,
+        NodeClient nodeClient,
+        OpenSearchSettings openSearchSettings
+    ) {
         super(QueryLanguageAction.NAME, transportService, actionFilters, QueryLanguageRequest::new);
         this.nodeClient = nodeClient;
+        this.openSearchSettings = openSearchSettings;
     }
 
     @Override
@@ -74,12 +79,11 @@ public class TransportQueryLanguageAction extends HandledTransportAction<QueryLa
     private void doExecuteOnWorker(QueryLanguageRequest request, ActionListener<QueryLanguageResponse> listener) {
         try {
             OpenSearchNodeClient osClient = new OpenSearchNodeClient(nodeClient);
-            Settings settings = new HardcodedSettings();
+            Settings settings = openSearchSettings;
 
             Schema schema = new AbstractSchema() {
                 @Override
                 protected Map<String, Table> getTableMap() {
-                    // Lazy: tables resolved by Calcite during planning
                     Map<String, Table> tables = new HashMap<>();
                     for (String index : osClient.indices()) {
                         tables.put(index, new OpenSearchIndex(osClient, settings, index));
@@ -100,8 +104,6 @@ public class TransportQueryLanguageAction extends HandledTransportAction<QueryLa
             ) {
                 RelNode plan;
                 if (request.getQueryType() == QueryType.SQL) {
-                    // SQL: use Calcite's native SQL parser → validate → convert to RelNode
-                    // Override parser config to use case-insensitive identifiers (JAVA lexing)
                     FrameworkConfig baseConfig = context.getPlanContext().config;
                     FrameworkConfig sqlConfig = Frameworks.newConfigBuilder(baseConfig)
                         .parserConfig(SqlParser.config().withLex(Lex.JAVA))
@@ -111,7 +113,6 @@ public class TransportQueryLanguageAction extends HandledTransportAction<QueryLa
                     SqlNode validated = calcitePlanner.validate(parsed);
                     plan = calcitePlanner.rel(validated).rel;
                 } else {
-                    // PPL: use UnifiedQueryPlanner which has the PPL parser
                     UnifiedQueryPlanner planner = new UnifiedQueryPlanner(context);
                     plan = planner.plan(request.getQuery());
                 }
@@ -144,41 +145,6 @@ public class TransportQueryLanguageAction extends HandledTransportAction<QueryLa
             }
         } catch (Exception e) {
             listener.onFailure(e);
-        }
-    }
-
-    /**
-     * Hardcoded settings for the PoC — no configurable plugin settings.
-     */
-    static class HardcodedSettings extends Settings {
-        private static final Map<Key, Object> DEFAULTS;
-
-        static {
-            Map<Key, Object> m = new HashMap<>();
-            m.put(Key.CALCITE_ENGINE_ENABLED, true);
-            m.put(Key.CALCITE_PUSHDOWN_ENABLED, true);
-            m.put(Key.CALCITE_PUSHDOWN_ROWCOUNT_ESTIMATION_FACTOR, 1.0);
-            m.put(Key.QUERY_SIZE_LIMIT, 200);
-            m.put(Key.QUERY_BUCKET_SIZE, 1000);
-            m.put(Key.SEARCH_MAX_BUCKETS, 65535);
-            m.put(Key.QUERY_MEMORY_LIMIT, new ByteSizeValue((long) (Runtime.getRuntime().maxMemory() * 0.85)));
-            m.put(Key.FIELD_TYPE_TOLERANCE, false);
-            m.put(Key.SQL_ENABLED, true);
-            m.put(Key.PPL_ENABLED, true);
-            m.put(Key.SQL_CURSOR_KEEP_ALIVE, TimeValue.timeValueMinutes(1));
-            m.put(Key.CALCITE_FALLBACK_ALLOWED, false);
-            DEFAULTS = Collections.unmodifiableMap(m);
-        }
-
-        @SuppressWarnings("unchecked")
-        @Override
-        public <T> T getSettingValue(Key key) {
-            return (T) DEFAULTS.get(key);
-        }
-
-        @Override
-        public List<?> getSettings() {
-            return Collections.emptyList();
         }
     }
 }

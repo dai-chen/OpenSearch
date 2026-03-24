@@ -157,8 +157,8 @@
         "./gradlew :modules:query-languages:check passes"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": "WIP \u2014 4 rules added, check not yet passing (likely String.format locale issue). 3 complex rules deferred: DedupPushdownRule, SortProjectExprTransposeRule, ExpandCollationOnProjectExprRule (need manual extraction of helper methods from Immutables Config interface)."
+      "passes": true,
+      "notes": "4 rules migrated: SortIndexScanRule, SortAggregateMeasureRule, RareTopPushdownRule, RelevanceFunctionPushdownRule. OpenSearchRelOptUtil utility class migrated. Fixed forbidden APIs (String.format Locale.ROOT, toLowerCase Locale.ROOT). Fixed PIT context leak in TransportQueryLanguageAction (ResultSet/PreparedStatement now properly closed). Updated SNAPSHOT SHA files. 3 complex rules deferred: DedupPushdownRule, SortProjectExprTransposeRule, ExpandCollationOnProjectExprRule."
     },
     {
       "id": "US-010",

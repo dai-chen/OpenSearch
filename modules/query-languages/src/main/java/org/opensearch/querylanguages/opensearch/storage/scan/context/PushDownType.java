@@ -19,6 +19,7 @@ public enum PushDownType {
     COLLAPSE,
     SORT_AGG_METRICS, // convert composite aggregate to terms or multi-terms bucket aggregate
     RARE_TOP, // convert composite aggregate to nested aggregate
+    SORT_EXPR, // sort expression pushdown
     // HIGHLIGHT,
     // NESTED
 }
