@@ -57,6 +57,13 @@
 - Always close ResultSet/PreparedStatement after query execution to release PIT contexts — MockSearchService asserts no in-flight contexts
 - `String.format` and `toLowerCase` must use `Locale.ROOT` — enforced by `forbiddenApisMain`
 
+## Discovered Patterns (US-010)
+- `RelOptRule.operand()` does NOT support predicates — override `matches(RelOptRuleCall)` instead
+- `Plugin.createComponents()` uses `org.opensearch.transport.client.Client` and `org.opensearch.core.common.io.stream.NamedWriteableRegistry`
+- Guice injection works for components returned from `createComponents()` — TransportAction can `@Inject` them
+- `Setting.boolSetting/intSetting/doubleSetting/positiveTimeSetting` with `Dynamic` property enables runtime updates
+- `ClusterSettings.addSettingsUpdateConsumer()` registers listeners for dynamic setting changes
+
 ## GUARDRAILS — DO NOT VIOLATE
 - ONLY modify files inside `modules/query-languages/` (exception: `settings.gradle` for module registration in US-001 only)
 - Do NOT modify any existing module, plugin, or server code
@@ -273,4 +280,46 @@ Do NOT re-copy or re-create the rule files — they're already there, just need 
   - SNAPSHOT jar SHAs can change upstream at any time — if `dependencyLicenses` fails with SHA mismatch, delete the `.sha1` files and run `updateShas` (the gradle task may not overwrite existing files)
   - PIT contexts MUST be cleaned up after query execution — close ResultSet and PreparedStatement to trigger PIT deletion, otherwise MockSearchService will assert in-flight context failures
   - The SQL path creates PIT contexts during scan execution; PPL may or may not depending on the query plan
+---
+
+## 2026-03-24T01:35 - US-010 (Phase 3 remaining: deferred rules, script engine, settings, serde)
+- Migrated 3 deferred planner rules using classic RelOptRule pattern (no Immutables annotation processor):
+  - DedupPushdownRule: converts dedup to aggregate and pushes down to scan, uses matches() for predicate checks
+  - SortProjectExprTransposeRule: transposes Sort over Project when sort expression maps to input field sort
+  - ExpandCollationOnProjectExprRule: expands collation on project expressions by finding equivalent field collations
+- Added supporting infrastructure:
+  - SortExprDigest class (de-lombok'd) for sort expression push-down context
+  - SORT_EXPR added to PushDownType enum
+  - getDigestByType() added to PushDownContext
+  - sourceCollationSatisfiesTargetCollation() and canScanProvideSortCollation() added to OpenSearchRelOptUtil
+- Replaced HardcodedSettings with OpenSearchSettings:
+  - Wired to ClusterSettings with dynamic update listeners for all settings
+  - Registers 10 Setting objects via getSettings() in plugin
+  - TransportQueryLanguageAction now receives OpenSearchSettings via Guice injection
+  - Plugin creates OpenSearchSettings in createComponents() and returns as Guice component
+- Added script engine stub: CalciteScriptEngine (ScriptEngine impl, throws UnsupportedOperationException)
+- Added cursor serialization stub: DefaultExpressionSerializer (implements ExpressionSerializer)
+- System index stubs (OpenSearchDescribeIndexRequest, OpenSearchSystemRequest) already existed from US-007
+- All 3 new rules registered in OpenSearchIndexRules.OPEN_SEARCH_INDEX_SCAN_RULES
+- Files changed:
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/OpenSearchSettings.java` — new
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/QueryLanguagesPlugin.java` — createComponents, getSettings
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/TransportQueryLanguageAction.java` — inject OpenSearchSettings
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/opensearch/planner/rules/DedupPushdownRule.java` — new
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/opensearch/planner/rules/SortProjectExprTransposeRule.java` — new
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/opensearch/planner/rules/ExpandCollationOnProjectExprRule.java` — new
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/opensearch/planner/rules/OpenSearchIndexRules.java` — register 3 new rules
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/opensearch/storage/scan/context/SortExprDigest.java` — new
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/opensearch/storage/scan/context/PushDownType.java` — add SORT_EXPR
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/opensearch/storage/scan/context/PushDownContext.java` — add getDigestByType
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/opensearch/util/OpenSearchRelOptUtil.java` — add 2 methods
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/opensearch/storage/script/CalciteScriptEngine.java` — new stub
+  - `modules/query-languages/src/main/java/org/opensearch/querylanguages/opensearch/storage/serde/DefaultExpressionSerializer.java` — new stub
+- **Verified**: `./gradlew :modules:query-languages:check` passes, all ITs pass
+- **Learnings for future iterations:**
+  - `RelOptRule.operand()` does NOT support predicates — use `matches()` override instead
+  - `Plugin.createComponents()` signature uses `org.opensearch.transport.client.Client` (not `org.opensearch.client.Client`) and `org.opensearch.core.common.io.stream.NamedWriteableRegistry`
+  - Guice injection works for components returned from `createComponents()` — TransportAction can `@Inject` them
+  - `Setting.boolSetting/intSetting/doubleSetting/positiveTimeSetting` with `Dynamic` property enables runtime updates via cluster settings API
+  - `ClusterSettings.addSettingsUpdateConsumer()` registers listeners for dynamic setting changes
 ---

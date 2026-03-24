@@ -173,8 +173,8 @@
         "Register script engines in plugin"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": "Not started. These are lower priority for the PoC \u2014 the core SQL/PPL query execution with filter/project/limit/aggregation/sort push-down already works without them."
+      "passes": true,
+      "notes": "Completed. 3 deferred rules migrated (DedupPushdownRule, SortProjectExprTransposeRule, ExpandCollationOnProjectExprRule) using classic RelOptRule pattern (no Immutables). CalciteScriptEngine stub registered. DefaultExpressionSerializer stub added. HardcodedSettings replaced with OpenSearchSettings wired to ClusterSettings with dynamic update listeners. SortExprDigest and SORT_EXPR PushDownType added. sourceCollationSatisfiesTargetCollation and canScanProvideSortCollation added to OpenSearchRelOptUtil. System index stubs (OpenSearchDescribeIndexRequest, OpenSearchSystemRequest) already existed from US-007."
     }
   ]
 }
