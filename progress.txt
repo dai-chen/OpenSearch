@@ -182,3 +182,73 @@
   - `FrameworkConfig` from `CalcitePlanContext.config` can be rebuilt via `Frameworks.newConfigBuilder(baseConfig)` to override parser config
   - The `UnifiedQueryCompiler.compile()` works with any RelNode regardless of source (PPL planner or Calcite SQL planner)
 ---
+
+## 2026-03-23T11:00 - US-007 (Phase 1: Remove unified-query-opensearch)
+- Deep-dive analysis of unified-query-opensearch dependency surface (~140 files, ~60-70 needed)
+- Created 3-phase migration plan in MIGRATION_PLAN.md
+- Migrated 51 files from main-sql/opensearch/ to modules/query-languages/opensearch/
+- Key adaptations:
+  - Removed ALL lombok annotations (manual getters, constructors, equals/hashCode/toString)
+  - Rewrote Calcite planner rules (Filter, Project, Limit) using classic RelOptRule pattern (no Immutables)
+  - Added equals()/hashCode() to OpenSearchDataType for HashMap lookups
+  - Added ExprCoreType fallbacks (STRING, INTEGER, etc.) to OpenSearchExprValueFactory typeActionMap
+  - Adapted for unified-query-core 3.6.0.0-SNAPSHOT API (no DATETIME enum, no UTC_ZONE_ID)
+  - Fixed forbidden APIs (String.format locale, ThreadLocalRandom, joptsimple, com.sun.management)
+  - Simplified GCedMemoryUsage to delegate to RuntimeMemoryUsage (avoid com.sun.management)
+  - Added package-info.java for 15 new packages
+  - Added SLF4J, commons-codec, httpcore5, janino, json-path, json-smart, accessors-smart, asm as runtime deps
+  - Synced NOTICE files (guava, failureaccess) with transport-grpc to avoid buildNotice conflicts
+  - Fixed transport thread blocking: moved doExecute to sql_background_io thread pool
+- Commits: 6 (plan doc + migration + cleanup + SLF4J/codec deps + Calcite runtime deps + thread fix)
+- **Verified**: check passes, ITs pass, ./gradlew run works with live SQL/PPL queries
+---
+
+## 2026-03-23T16:10 - US-008 (Phase 2: Aggregation push-down)
+- Migrated 35 files for aggregation infrastructure:
+  - AggregateAnalyzer, AggregateFilterAnalyzer, CaseRangeAnalyzer (request analyzers)
+  - AggregateIndexScanRule (rewritten without Immutables, DEFAULT + COUNT_STAR variants)
+  - 15 aggregation response parsers (SingleValueParser, StatsParser, CompositeAggregationParser, etc.)
+  - 4 aggregation DSL builders (AggregationBuilderHelper, BucketAggregationBuilder, CompositeAggregationBuilder, MetricAggregationBuilder)
+  - AggregationQueryBuilder
+  - Stub files: ExpressionSerializer, SerializationWrapper, CompoundedScriptEngine, FilterQueryBuilder
+- Key challenges:
+  - Aggregation DSL builders depend on script engine (ExpressionSerializer, FilterQueryBuilder) — stubbed
+  - @Builder annotation on FilterParser — replaced with constructor
+  - @Value annotation on ArgMaxMinParser — manually expanded
+  - MetricParser.getName() missing on 6 implementations after @Getter removal
+  - TotalHits.value → TotalHits.value() (Lucene 10 API change)
+- **Verified**: check passes, ITs pass
+---
+
+## 2026-03-23T16:25 - US-009 (Phase 3: Sort/rare/top/relevance rules — WIP)
+- Copied and rewrote 4 planner rules: SortIndexScanRule, SortAggregateMeasureRule, RareTopPushdownRule, RelevanceFunctionPushdownRule
+- Copied OpenSearchRelOptUtil (utility class for sort/collation)
+- Registered all new rules in OpenSearchIndexRules
+- 3 complex rules deferred (need manual helper method extraction from Immutables Config):
+  - DedupPushdownRule (has LOG + validFilter/validAgg helpers)
+  - SortProjectExprTransposeRule (uses OpenSearchRelOptUtil deeply)
+  - ExpandCollationOnProjectExprRule (uses AbstractConverter)
+- **Status**: Compiles but check not yet verified (likely String.format locale fix needed)
+- **To finish**: Run check, fix forbidden APIs/spotless, commit
+---
+
+## Remaining Work (US-010)
+Not started — lower priority for PoC:
+- 3 deferred planner rules (DedupPushdownRule, SortProjectExprTransposeRule, ExpandCollationOnProjectExprRule)
+- Script engine infrastructure (CalciteScript, ExpressionScript, filter/sort script factories)
+- System index support (OpenSearchSystemIndex, SHOW TABLES, DESCRIBE)
+- Cursor serialization (DefaultExpressionSerializer, RelJsonSerializer)
+- Error messages (ErrorMessage, ErrorMessageFactory)
+- Security (SecurityAccess)
+- Dynamic settings (OpenSearchSettings replacing HardcodedSettings)
+
+## Human Intervention Note (2026-03-23T17:50)
+US-009 is partially done — 4 rules and OpenSearchRelOptUtil are already in the tree but `check` hasn't passed yet.
+The likely fix is:
+1. `./gradlew :modules:query-languages:forbiddenApisMain` — fix any `String.format` without `Locale.ROOT`
+2. `./gradlew :modules:query-languages:spotlessApply` — auto-fix formatting
+3. `./gradlew :modules:query-languages:loggerUsageCheck` — fix any trailing exception args in LOG calls
+4. Remove any remaining `@Value` or `@Builder` lombok/immutables annotations
+5. Add `@SuppressWarnings({"unchecked", "rawtypes"})` if needed for warnings-as-errors
+6. Run `./gradlew :modules:query-languages:check` to verify all passes
+Do NOT re-copy or re-create the rule files — they're already there, just need check fixes.

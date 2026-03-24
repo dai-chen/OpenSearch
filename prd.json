@@ -1,8 +1,8 @@
 {
   "project": "SQL/PPL to OpenSearch Core PoC",
   "branchName": "ralph/sql-ppl-core-poc",
-  "description": "Prove that SQL/PPL can be a first-class query language in OpenSearch core by creating a new module (modules/query-languages/) that registers _sql and _ppl REST endpoints, uses the unified-query-api to parse and compile queries, and leverages OpenSearchIndex from the opensearch-project/sql opensearch module to execute against OpenSearch natively.",
-  "buildCommand": "./gradlew :modules:query-languages:build",
+  "description": "Prove that SQL/PPL can be a first-class query language in OpenSearch core by creating a new module (modules/query-languages/) that registers _sql and _ppl REST endpoints, uses the unified-query-api to parse and compile queries, and executes against OpenSearch natively. Phase 2 goal: remove the external unified-query-opensearch dependency by inlining the OpenSearch-specific bridge code directly into the module.",
+  "buildCommand": "./gradlew :modules:query-languages:check",
   "testCommand": "./gradlew :modules:query-languages:test",
   "verifyCommand": "./gradlew :modules:query-languages:internalClusterTest",
   "userStories": [
@@ -16,13 +16,13 @@
         "build.gradle adds unified-query-api as implementation dependency from ci.opensearch.org snapshots maven repo (group: org.opensearch.query, version matching opensearch_version property or 3.6.0.0-SNAPSHOT)",
         "settings.gradle at repo root includes the new module (add 'modules:query-languages' to the addSubProjects call or equivalent)",
         "Plugin class extends org.opensearch.plugins.Plugin and implements ActionPlugin with empty getRestHandlers() and getActions()",
-        "Jar conflicts resolved via resolutionStrategy.force and/or dependency exclusions — check what unified-query-api pulls transitively vs what server already provides",
+        "Jar conflicts resolved via resolutionStrategy.force and/or dependency exclusions \u2014 check what unified-query-api pulls transitively vs what server already provides",
         "./gradlew :modules:query-languages:build passes with exit code 0",
         "No existing files outside modules/query-languages/ are modified EXCEPT settings.gradle (to register the module)"
       ],
       "priority": 1,
       "passes": true,
-      "notes": "Reference existing modules like modules/reindex/ or modules/lang-painless/ for build.gradle patterns. The unified-query-api artifact is published to https://ci.opensearch.org/ci/dbc/integ-test/ or the OpenSearch snapshots repo. Check sandbox/plugins/analytics-engine/build.gradle for the exact maven repo URL and artifact coordinates (org.opensearch.query:unified-query-api, unified-query-core, unified-query-ppl). Jar hell is the main risk — OpenSearch checks for duplicate classes across the classpath."
+      "notes": "Reference existing modules like modules/reindex/ or modules/lang-painless/ for build.gradle patterns. The unified-query-api artifact is published to https://ci.opensearch.org/ci/dbc/integ-test/ or the OpenSearch snapshots repo. Check sandbox/plugins/analytics-engine/build.gradle for the exact maven repo URL and artifact coordinates (org.opensearch.query:unified-query-api, unified-query-core, unified-query-ppl). Jar hell is the main risk \u2014 OpenSearch checks for duplicate classes across the classpath."
     },
     {
       "id": "US-002",
@@ -31,14 +31,14 @@
       "acceptanceCriteria": [
         "OpenSearchIndex class (Calcite Table implementation) is present in the module under an appropriate package",
         "Minimal dependency chain is included: OpenSearchClient, OpenSearchNodeClient, index mapping classes, request builders, response parsers needed by OpenSearchIndex",
-        "All DataSourceService and StorageEngine coupling is removed — these classes should NOT reference DataSourceService or StorageEngine interfaces",
+        "All DataSourceService and StorageEngine coupling is removed \u2014 these classes should NOT reference DataSourceService or StorageEngine interfaces",
         "Code compiles cleanly with no references to sql repo's core module abstractions (ExprValue, StorageEngine, DataSourceService etc.) unless they come via unified-query-api",
         "./gradlew :modules:query-languages:build passes",
         "Only files inside modules/query-languages/ are added or modified"
       ],
       "priority": 2,
       "passes": true,
-      "notes": "Instead of copying source files, added unified-query-opensearch jar as a dependency. This jar already contains OpenSearchIndex, OpenSearchClient, OpenSearchNodeClient, CalciteLogicalIndexScan, OpenSearchDataType, IndexMapping, and the full dependency chain — all compiled and jar-hell-free. No DataSourceService/StorageEngine coupling in OpenSearchIndex (verified via javap)."
+      "notes": "Instead of copying source files, added unified-query-opensearch jar as a dependency. This jar already contains OpenSearchIndex, OpenSearchClient, OpenSearchNodeClient, CalciteLogicalIndexScan, OpenSearchDataType, IndexMapping, and the full dependency chain \u2014 all compiled and jar-hell-free. No DataSourceService/StorageEngine coupling in OpenSearchIndex (verified via javap)."
     },
     {
       "id": "US-003",
@@ -47,7 +47,7 @@
       "acceptanceCriteria": [
         "RestPplAction extends BaseRestHandler and registers route POST /_ppl",
         "Request body is JSON with a 'query' field containing the PPL string",
-        "Transport action orchestrates: build AbstractSchema from cluster state → UnifiedQueryContext (language=PPL) → UnifiedQueryPlanner.plan() → UnifiedQueryCompiler.compile() → PreparedStatement.executeQuery() → format ResultSet as JSON response",
+        "Transport action orchestrates: build AbstractSchema from cluster state \u2192 UnifiedQueryContext (language=PPL) \u2192 UnifiedQueryPlanner.plan() \u2192 UnifiedQueryCompiler.compile() \u2192 PreparedStatement.executeQuery() \u2192 format ResultSet as JSON response",
         "Schema builder creates a lazy AbstractSchema that instantiates OpenSearchIndex on demand (same pattern as UnifiedQueryOpenSearchIT.createOpenSearchSchema())",
         "Plugin class registers the REST handler and transport action",
         "./gradlew :modules:query-languages:build passes",
@@ -55,7 +55,7 @@
       ],
       "priority": 3,
       "passes": true,
-      "notes": "Implemented with TransportQueryLanguageAction (HandledTransportAction), QueryLanguageRequest/Response, RestPplAction. Action name must use valid prefix (indices:data/read/...). HardcodedSettings inner class provides PoC defaults. Schema built lazily from osClient.indices(). Pipeline: UnifiedQueryPlanner.plan() → UnifiedQueryCompiler.compile() → PreparedStatement.executeQuery() → ResultSet → JSON response."
+      "notes": "Implemented with TransportQueryLanguageAction (HandledTransportAction), QueryLanguageRequest/Response, RestPplAction. Action name must use valid prefix (indices:data/read/...). HardcodedSettings inner class provides PoC defaults. Schema built lazily from osClient.indices(). Pipeline: UnifiedQueryPlanner.plan() \u2192 UnifiedQueryCompiler.compile() \u2192 PreparedStatement.executeQuery() \u2192 ResultSet \u2192 JSON response."
     },
     {
       "id": "US-004",
@@ -87,7 +87,7 @@
       ],
       "priority": 5,
       "passes": true,
-      "notes": "Place in src/internalClusterTest/java/. Use OpenSearchIntegTestCase as base. Index a few simple documents, query via REST client, assert response. Keep it minimal — just prove the pipeline works end-to-end. Reference existing ITs in the repo for patterns (e.g., modules/reindex/src/internalClusterTest/)."
+      "notes": "Place in src/internalClusterTest/java/. Use OpenSearchIntegTestCase as base. Index a few simple documents, query via REST client, assert response. Keep it minimal \u2014 just prove the pipeline works end-to-end. Reference existing ITs in the repo for patterns (e.g., modules/reindex/src/internalClusterTest/)."
     },
     {
       "id": "US-006",
@@ -103,7 +103,78 @@
       ],
       "priority": 6,
       "passes": true,
-      "notes": "UnifiedQueryPlanner only supports PPL (buildQueryParser throws for SQL). SQL uses Calcite's native Planner: parse → validate → rel(). Lex.JAVA needed for case-insensitive identifiers. FrameworkConfig rebuilt from CalcitePlanContext.config with overridden parserConfig."
+      "notes": "UnifiedQueryPlanner only supports PPL (buildQueryParser throws for SQL). SQL uses Calcite's native Planner: parse \u2192 validate \u2192 rel(). Lex.JAVA needed for case-insensitive identifiers. FrameworkConfig rebuilt from CalcitePlanContext.config with overridden parserConfig."
+    },
+    {
+      "id": "US-007",
+      "title": "Phase 1: Remove unified-query-opensearch dependency \u2014 inline opensearch module code",
+      "description": "Migrate the OpenSearch-specific query execution bridge code from the external unified-query-opensearch jar into the query-languages module source tree. Remove the jar dependency.",
+      "acceptanceCriteria": [
+        "unified-query-opensearch removed from build.gradle dependencies",
+        "51 Java files migrated under org.opensearch.querylanguages.opensearch.* package",
+        "All lombok annotations removed (manual getters, constructors, equals/hashCode)",
+        "Calcite planner rules rewritten without Immutables annotation processor",
+        "Filter, project, and limit push-down rules registered and working",
+        "OpenSearchDataType.equals()/hashCode() added for type map lookups",
+        "ExprCoreType fallbacks added to OpenSearchExprValueFactory",
+        "SLF4J, commons-codec, and Calcite runtime deps added for ./gradlew run",
+        "Transport thread blocking fixed (sql_background_io thread pool)",
+        "./gradlew :modules:query-languages:check passes",
+        "Existing SQL and PPL integration tests pass",
+        "./gradlew run starts cluster, SQL/PPL queries return correct results"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Completed in 5 commits. Key challenges: de-lombok (no lombok in OpenSearch core), Immutables removal (Calcite rules use @Value.Immutable for Config), runtime classloader isolation (plugin can't see server-provided SLF4J/commons-codec), transport thread assertion (blocking I/O on Netty thread)."
+    },
+    {
+      "id": "US-008",
+      "title": "Phase 2: Add aggregation push-down support",
+      "description": "Migrate aggregation infrastructure from unified-query-opensearch to support GROUP BY, COUNT, SUM, AVG, MIN, MAX with push-down to OpenSearch aggregation API.",
+      "acceptanceCriteria": [
+        "AggregateAnalyzer, AggregateFilterAnalyzer, CaseRangeAnalyzer migrated",
+        "AggregateIndexScanRule registered (DEFAULT + COUNT_STAR variants)",
+        "15 aggregation response parsers migrated",
+        "4 aggregation DSL builders migrated",
+        "AggregationQueryBuilder migrated",
+        "Stub ExpressionSerializer, SerializationWrapper, CompoundedScriptEngine for script-based agg",
+        "./gradlew :modules:query-languages:check passes"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Completed in 1 commit (35 files). Script-based aggregation expressions throw UnsupportedOperationException \u2014 only native field aggregations work. The aggregation DSL builders depend on ExpressionSerializer/FilterQueryBuilder which are stubbed."
+    },
+    {
+      "id": "US-009",
+      "title": "Phase 3: Add sort, rare/top, relevance push-down rules",
+      "description": "Migrate remaining Calcite planner rules for sort, rare/top, and relevance function push-down.",
+      "acceptanceCriteria": [
+        "SortIndexScanRule migrated and registered",
+        "SortAggregateMeasureRule migrated and registered",
+        "RareTopPushdownRule migrated and registered",
+        "RelevanceFunctionPushdownRule migrated and registered",
+        "OpenSearchRelOptUtil migrated",
+        "./gradlew :modules:query-languages:check passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "WIP \u2014 4 rules added, check not yet passing (likely String.format locale issue). 3 complex rules deferred: DedupPushdownRule, SortProjectExprTransposeRule, ExpandCollationOnProjectExprRule (need manual extraction of helper methods from Immutables Config interface)."
+    },
+    {
+      "id": "US-010",
+      "title": "Phase 3 remaining: Script engines, system index, serde, settings",
+      "description": "Complete full feature parity with unified-query-opensearch for the Calcite engine path.",
+      "acceptanceCriteria": [
+        "DedupPushdownRule, SortProjectExprTransposeRule, ExpandCollationOnProjectExprRule migrated",
+        "Script engine infrastructure (CalciteScript, ExpressionScript, filter/sort scripts)",
+        "System index support (SHOW TABLES, DESCRIBE)",
+        "Cursor serialization (DefaultExpressionSerializer, RelJsonSerializer)",
+        "Replace HardcodedSettings with OpenSearchSettings wired to cluster settings",
+        "Register script engines in plugin"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "Not started. These are lower priority for the PoC \u2014 the core SQL/PPL query execution with filter/project/limit/aggregation/sort push-down already works without them."
     }
   ]
 }

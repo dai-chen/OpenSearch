@@ -16,18 +16,20 @@ import java.util.List;
 /** Registry of OpenSearch index scan push-down rules. */
 public class OpenSearchIndexRules {
 
-    /** Push-down rules for filter, project, limit, and aggregation. */
+    /** All push-down rules for the Calcite engine. */
     public static final List<RelOptRule> OPEN_SEARCH_INDEX_SCAN_RULES = ImmutableList.of(
         ProjectIndexScanRule.INSTANCE,
         FilterIndexScanRule.INSTANCE,
         LimitIndexScanRule.INSTANCE,
         AggregateIndexScanRule.DEFAULT,
-        AggregateIndexScanRule.COUNT_STAR
+        AggregateIndexScanRule.COUNT_STAR,
+        SortIndexScanRule.INSTANCE,
+        SortAggregateMeasureRule.INSTANCE,
+        RareTopPushdownRule.INSTANCE
     );
 
-    // TODO: Phase 3 - Relevance function pushdown
-    /** Relevance function pushdown rule placeholder. */
-    public static final RelOptRule RELEVANCE_FUNCTION_PUSHDOWN = FilterIndexScanRule.INSTANCE;
+    /** Relevance function pushdown rule (match, match_phrase, etc.). */
+    public static final RelOptRule RELEVANCE_FUNCTION_PUSHDOWN = RelevanceFunctionPushdownRule.INSTANCE;
 
     private OpenSearchIndexRules() {}
 }
