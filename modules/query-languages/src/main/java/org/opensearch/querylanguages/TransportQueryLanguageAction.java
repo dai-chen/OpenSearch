@@ -119,25 +119,28 @@ public class TransportQueryLanguageAction extends HandledTransportAction<QueryLa
                 UnifiedQueryCompiler compiler = new UnifiedQueryCompiler(context);
                 PreparedStatement stmt = compiler.compile(plan);
 
-                ResultSet rs = stmt.executeQuery();
-                ResultSetMetaData meta = rs.getMetaData();
-                int colCount = meta.getColumnCount();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    ResultSetMetaData meta = rs.getMetaData();
+                    int colCount = meta.getColumnCount();
 
-                List<String> columns = new ArrayList<>(colCount);
-                for (int i = 1; i <= colCount; i++) {
-                    columns.add(meta.getColumnName(i));
-                }
-
-                List<List<Object>> dataRows = new ArrayList<>();
-                while (rs.next()) {
-                    List<Object> row = new ArrayList<>(colCount);
+                    List<String> columns = new ArrayList<>(colCount);
                     for (int i = 1; i <= colCount; i++) {
-                        row.add(rs.getObject(i));
+                        columns.add(meta.getColumnName(i));
                     }
-                    dataRows.add(row);
-                }
 
-                listener.onResponse(new QueryLanguageResponse(columns, dataRows));
+                    List<List<Object>> dataRows = new ArrayList<>();
+                    while (rs.next()) {
+                        List<Object> row = new ArrayList<>(colCount);
+                        for (int i = 1; i <= colCount; i++) {
+                            row.add(rs.getObject(i));
+                        }
+                        dataRows.add(row);
+                    }
+
+                    listener.onResponse(new QueryLanguageResponse(columns, dataRows));
+                } finally {
+                    stmt.close();
+                }
             }
         } catch (Exception e) {
             listener.onFailure(e);

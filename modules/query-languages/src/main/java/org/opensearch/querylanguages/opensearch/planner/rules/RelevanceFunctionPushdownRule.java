@@ -19,6 +19,8 @@ import org.apache.calcite.rex.RexVisitorImpl;
 import org.apache.calcite.sql.SqlOperator;
 import org.opensearch.querylanguages.opensearch.storage.scan.CalciteLogicalIndexScan;
 
+import java.util.Locale;
+
 import static org.opensearch.sql.calcite.utils.UserDefinedFunctionUtils.MULTI_FIELDS_RELEVANCE_FUNCTION_SET;
 import static org.opensearch.sql.calcite.utils.UserDefinedFunctionUtils.SINGLE_FIELD_RELEVANCE_FUNCTION_SET;
 
@@ -44,7 +46,7 @@ public class RelevanceFunctionPushdownRule extends RelOptRule {
                 apply(call, filter, scan);
             }
         } else {
-            throw new AssertionError(String.format("The length of rels should be 2 but got %s", call.rels.length));
+            throw new AssertionError(String.format(Locale.ROOT, "The length of rels should be 2 but got %s", call.rels.length));
         }
     }
 
@@ -78,7 +80,7 @@ public class RelevanceFunctionPushdownRule extends RelOptRule {
         @Override
         public Void visitCall(RexCall call) {
             SqlOperator operator = call.getOperator();
-            String operatorName = operator.getName().toLowerCase();
+            String operatorName = operator.getName().toLowerCase(Locale.ROOT);
 
             // Check if this is a relevance function
             if (SINGLE_FIELD_RELEVANCE_FUNCTION_SET.contains(operatorName) || MULTI_FIELDS_RELEVANCE_FUNCTION_SET.contains(operatorName)) {
