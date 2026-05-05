@@ -41,10 +41,16 @@ configurations {
 }
 sourceSets.main.compileClasspath += configurations.calciteCompile
 sourceSets.test.compileClasspath += configurations.calciteCompile
+// Calcite also needed at runtime for tests (Guava + Calcite core transitives).
+sourceSets.test.runtimeClasspath += configurations.calciteCompile
 
 dependencies {
   // Analytics framework + Calcite provided at runtime by analytics-engine (parent classloader via extendedPlugins)
   compileOnly project(':sandbox:libs:analytics-framework')
+
+  // Tests run outside the plugin classloader — need analytics-framework on the test classpath
+  // so JUnit can see Calcite RelNode / SchemaPlus / RelDataType types.
+  testImplementation project(':sandbox:libs:analytics-framework')
 
   // Guava for compilation — Calcite API exposes guava types
   calciteCompile "com.google.guava:guava:${versions.guava}"

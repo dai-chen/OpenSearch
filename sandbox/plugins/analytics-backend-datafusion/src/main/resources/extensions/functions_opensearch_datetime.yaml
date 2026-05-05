@@ -1,0 +1,29 @@
+%YAML 1.2
+---
+urn: extension:opensearch:functions_opensearch_datetime
+# OpenSearch custom Substrait datetime extensions for PPL functions that are not
+# part of the standard substrait-io functions_datetime catalog and are not
+# provided natively by DataFusion's substrait consumer.
+#
+# URI (used when loading via SimpleExtension.load and in emitted Substrait plans):
+#   extension:opensearch:functions_opensearch_datetime
+#
+# Each function declared here MUST have a matching ScalarUDF registered on the
+# native DataFusion SessionContext in datafusion-native's local_executor/query_executor
+# (see register_custom_udfs on the Rust side). Without the Rust registration the
+# substrait plan converts but execution fails with "Unsupported function name".
+scalar_functions:
+  - name: "last_day"
+    description: >-
+      Returns the date of the last day of the month of the given timestamp.
+      Equivalent to MySQL / standard-SQL LAST_DAY. The return is the calendar
+      date at midnight UTC on the final day of the month.
+    impls:
+      - args:
+          - name: x
+            value: "precision_timestamp<P>"
+        return: "precision_timestamp<P>"
+      - args:
+          - name: x
+            value: "timestamp"
+        return: "timestamp"
