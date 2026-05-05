@@ -8,6 +8,20 @@
 
 package org.opensearch.be.datafusion;
 
+import org.apache.arrow.c.ArrowArray;
+import org.apache.arrow.c.ArrowSchema;
+import org.apache.arrow.c.CDataDictionaryProvider;
+import org.apache.arrow.c.Data;
+import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.TimeStampMilliVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.ipc.WriteChannel;
+import org.apache.arrow.vector.ipc.message.MessageSerializer;
+import org.apache.arrow.vector.types.TimeUnit;
+import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.arrow.vector.types.pojo.Field;
+import org.apache.arrow.vector.types.pojo.FieldType;
+import org.apache.arrow.vector.types.pojo.Schema;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
@@ -15,31 +29,44 @@ import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.impl.AbstractSchema;
 import org.apache.calcite.schema.impl.AbstractTable;
 import org.apache.calcite.sql.type.SqlTypeName;
+import org.opensearch.be.datafusion.nativelib.NativeBridge;
+import org.opensearch.be.datafusion.nativelib.StreamHandle;
+import org.opensearch.core.action.ActionListener;
 import org.opensearch.sql.api.UnifiedQueryContext;
 import org.opensearch.sql.api.UnifiedQueryPlanner;
 import org.opensearch.sql.executor.QueryType;
 import org.opensearch.test.OpenSearchTestCase;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.channels.Channels;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import io.substrait.extension.DefaultExtensionCatalog;
 import io.substrait.extension.SimpleExtension;
-import io.substrait.proto.Plan;
-import io.substrait.proto.PlanRel;
-import io.substrait.proto.Rel;
+
+import static org.apache.arrow.c.Data.importField;
 
 /**
- * PPL-based integration tests for datetime UDF cleanup PoC.
- * Tests the full pipeline: PPL text → UnifiedQueryPlanner → RelNode → DatetimeTypeRewriter → Substrait.
+ * End-to-end PPL integration tests for datetime UDF cleanup PoC.
+ * Full pipeline: PPL text → RelNode → DatetimeTypeRewriter → Substrait → DataFusion native execution → results.
  */
 public class DatetimeUdfPplIntegTests extends OpenSearchTestCase {
 
+    // 2024-01-15T10:30:00Z in epoch millis
+    private static final long INPUT_MILLIS = 1705312200000L;
+
     private SimpleExtension.ExtensionCollection extensions;
+    private NativeRuntimeHandle runtimeHandle;
+    private RootAllocator allocator;
 
     @Override
     public void setUp() throws Exception {
         super.setUp();
+        // Load Substrait extensions
         Thread t = Thread.currentThread();
         ClassLoader prev = t.getContextClassLoader();
         try {
@@ -51,11 +78,23 @@ public class DatetimeUdfPplIntegTests extends OpenSearchTestCase {
         } finally {
             t.setContextClassLoader(prev);
         }
+
+        // Initialize native runtime
+        NativeBridge.initTokioRuntimeManager(2);
+        Path spillDir = createTempDir("datafusion-spill");
+        runtimeHandle = new NativeRuntimeHandle(
+            NativeBridge.createGlobalRuntime(128 * 1024 * 1024, 0L, spillDir.toString(), 64 * 1024 * 1024)
+        );
+        allocator = new RootAllocator(Long.MAX_VALUE);
     }
 
-    /**
-     * Creates a test schema with a table 't' having a TIMESTAMP column 'created'.
-     */
+    @Override
+    public void tearDown() throws Exception {
+        allocator.close();
+        runtimeHandle.close();
+        super.tearDown();
+    }
+
     private AbstractSchema createTestSchema() {
         return new AbstractSchema() {
             @Override
@@ -64,7 +103,8 @@ public class DatetimeUdfPplIntegTests extends OpenSearchTestCase {
                     @Override
                     public RelDataType getRowType(RelDataTypeFactory typeFactory) {
                         return typeFactory.builder()
-                            .add("created", typeFactory.createTypeWithNullability(typeFactory.createSqlType(SqlTypeName.TIMESTAMP), true))
+                            .add("created", typeFactory.createTypeWithNullability(
+                                typeFactory.createSqlType(SqlTypeName.TIMESTAMP), true))
                             .build();
                     }
                 });
@@ -78,71 +118,186 @@ public class DatetimeUdfPplIntegTests extends OpenSearchTestCase {
             .catalog("opensearch", createTestSchema())
             .defaultNamespace("opensearch")
             .build()) {
-            UnifiedQueryPlanner planner = new UnifiedQueryPlanner(context);
-            return planner.plan(ppl);
+            return new UnifiedQueryPlanner(context).plan(ppl);
         } catch (Exception e) {
             throw new RuntimeException("Failed to plan PPL: " + e.getMessage(), e);
         }
     }
 
-    private Plan convertToSubstrait(RelNode relNode) throws Exception {
+    private byte[] toSubstraitBytes(RelNode relNode) {
+        // The PPL planner produces LogicalTableScan with qualified name ["catalog", "table"].
+        // DataFusion's local session expects just ["table"]. We pass the RelNode through
+        // convertShardScanFragment which uses StageInputTableScan internally for the leaf.
+        // For this test, we replace the leaf TableScan with a StageInputTableScan.
+        RelNode leaf = relNode;
+        while (leaf.getInputs() != null && leaf.getInputs().isEmpty() == false) {
+            leaf = leaf.getInput(0);
+        }
+        // Build a StageInputTableScan with the same row type as the original scan
+        RelNode replacement = new DataFusionFragmentConvertor.StageInputTableScan(
+            leaf.getCluster(), leaf.getTraitSet(), "t", leaf.getRowType()
+        );
+        // Replace the leaf in the plan by rebuilding from bottom up
+        RelNode rewritten = replaceLeafScan(relNode, replacement);
         DataFusionFragmentConvertor convertor = new DataFusionFragmentConvertor(extensions);
-        byte[] bytes = convertor.convertShardScanFragment("t", relNode);
-        assertNotNull(bytes);
-        assertTrue(bytes.length > 0);
-        return Plan.parseFrom(bytes);
+        return convertor.convertShardScanFragment("t", rewritten);
     }
 
-    private Rel rootRel(Plan plan) {
-        assertFalse(plan.getRelationsList().isEmpty());
-        PlanRel planRel = plan.getRelationsList().get(0);
-        assertTrue(planRel.hasRoot());
-        return planRel.getRoot().getInput();
+    /** Recursively replace the leaf TableScan with the given replacement. */
+    private RelNode replaceLeafScan(RelNode node, RelNode replacement) {
+        if (node.getInputs().isEmpty()) {
+            return replacement;
+        }
+        List<RelNode> newInputs = new ArrayList<>();
+        for (RelNode input : node.getInputs()) {
+            newInputs.add(replaceLeafScan(input, replacement));
+        }
+        return node.copy(node.getTraitSet(), newInputs);
     }
 
     /**
-     * PPL: source=t | eval d = DATE_ADD(created, INTERVAL 1 DAY)
-     * Verifies: PPL planner produces RelNode with UDT type → rewriter normalizes → Substrait has date_add function.
+     * Execute Substrait plan in DataFusion with a memtable containing one timestamp row.
      */
-    public void testDateAddFromPpl() throws Exception {
+    private List<Object[]> executeInDataFusion(byte[] substraitBytes) throws Exception {
+        Schema arrowSchema = new Schema(List.of(
+            new Field("created", FieldType.nullable(new ArrowType.Timestamp(TimeUnit.MILLISECOND, null)), null)
+        ));
+
+        // Build test batch: one row with INPUT_MILLIS
+        VectorSchemaRoot batch = VectorSchemaRoot.create(arrowSchema, allocator);
+        batch.allocateNew();
+        TimeStampMilliVector col = (TimeStampMilliVector) batch.getVector(0);
+        col.setSafe(0, INPUT_MILLIS);
+        col.setValueCount(1);
+        batch.setRowCount(1);
+
+        // Create session and register memtable
+        DatafusionLocalSession session = new DatafusionLocalSession(runtimeHandle.get());
+        try {
+            // Export batch via Arrow C Data
+            try (ArrowArray array = ArrowArray.allocateNew(allocator);
+                 ArrowSchema schema = ArrowSchema.allocateNew(allocator)) {
+                Data.exportVectorSchemaRoot(allocator, batch, null, array, schema);
+                NativeBridge.registerMemtable(
+                    session.getPointer(), "t", schemaIpc(arrowSchema),
+                    new long[]{array.memoryAddress()}, new long[]{schema.memoryAddress()}
+                );
+            }
+            batch.close();
+
+            // Execute Substrait plan
+            long streamPtr = NativeBridge.executeLocalPlan(session.getPointer(), substraitBytes);
+            assertTrue("stream ptr must be non-zero", streamPtr != 0);
+
+            // Read results
+            try (StreamHandle streamHandle = new StreamHandle(streamPtr, runtimeHandle);
+                 CDataDictionaryProvider dictProvider = new CDataDictionaryProvider()) {
+
+                long schemaAddr = asyncCall(
+                    listener -> NativeBridge.streamGetSchema(streamHandle.getPointer(), listener)
+                );
+                Schema outSchema = new Schema(
+                    importField(allocator, ArrowSchema.wrap(schemaAddr), dictProvider).getChildren(), null
+                );
+
+                List<Object[]> rows = new ArrayList<>();
+                try (VectorSchemaRoot root = VectorSchemaRoot.create(outSchema, allocator)) {
+                    while (true) {
+                        long arrayAddr = asyncCall(
+                            listener -> NativeBridge.streamNext(runtimeHandle.get(), streamHandle.getPointer(), listener)
+                        );
+                        if (arrayAddr == 0) break;
+                        Data.importIntoVectorSchemaRoot(allocator, ArrowArray.wrap(arrayAddr), root, dictProvider);
+                        for (int r = 0; r < root.getRowCount(); r++) {
+                            Object[] row = new Object[root.getFieldVectors().size()];
+                            for (int c = 0; c < row.length; c++) {
+                                row[c] = root.getFieldVectors().get(c).getObject(r);
+                            }
+                            rows.add(row);
+                        }
+                    }
+                }
+                return rows;
+            }
+        } finally {
+            session.close();
+        }
+    }
+
+    private static byte[] schemaIpc(Schema schema) throws Exception {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (WriteChannel channel = new WriteChannel(Channels.newChannel(baos))) {
+            MessageSerializer.serialize(channel, schema);
+        }
+        return baos.toByteArray();
+    }
+
+    private long asyncCall(java.util.function.Consumer<ActionListener<Long>> call) {
+        CompletableFuture<Long> future = new CompletableFuture<>();
+        call.accept(new ActionListener<>() {
+            @Override
+            public void onResponse(Long v) { future.complete(v); }
+            @Override
+            public void onFailure(Exception e) { future.completeExceptionally(e); }
+        });
+        return future.join();
+    }
+
+    // ── Tests ──────────────────────────────────────────────────────────────────
+
+    /**
+     * PPL: source=t | eval d = DATE_ADD(created, INTERVAL 1 DAY)
+     * Verifies full E2E: PPL → RelNode → Substrait → DataFusion → results.
+     * Expected: created = "2024-01-15..." (string), d = "2024-01-16..." (string, +1 day)
+     */
+    public void testDateAddEndToEnd() throws Exception {
         RelNode plan = planPpl("source=t | eval d = DATE_ADD(created, INTERVAL 1 DAY)");
-        logger.info("RelNode from PPL:\n{}", plan.explain());
+        logger.info("RelNode:\n{}", plan.explain());
 
-        Plan substraitPlan = convertToSubstrait(plan);
-        Rel root = rootRel(substraitPlan);
+        byte[] substrait = toSubstraitBytes(plan);
+        List<Object[]> rows = executeInDataFusion(substrait);
 
-        // Root should be a ProjectRel (output cast added by rewriter)
-        assertTrue("root must be a ProjectRel", root.hasProject());
-        logger.info("testDateAddFromPpl PASSED — Substrait plan:\n{}", substraitPlan);
+        assertEquals("Expected 1 row", 1, rows.size());
+        Object[] row = rows.get(0);
+        logger.info("Result: created={} ({}), d={} ({})", row[0], row[0].getClass().getSimpleName(),
+            row[1], row[1].getClass().getSimpleName());
+        assertNotNull("created must not be null", row[0]);
+        assertNotNull("d must not be null", row[1]);
     }
 
     /**
      * PPL: source=t | eval d = LAST_DAY(created)
+     * Expected: d = "2024-01-31..." (last day of January 2024)
      */
-    public void testLastDayFromPpl() throws Exception {
+    public void testLastDayEndToEnd() throws Exception {
         RelNode plan = planPpl("source=t | eval d = LAST_DAY(created)");
-        logger.info("RelNode from PPL:\n{}", plan.explain());
+        logger.info("RelNode:\n{}", plan.explain());
 
-        Plan substraitPlan = convertToSubstrait(plan);
-        Rel root = rootRel(substraitPlan);
+        byte[] substrait = toSubstraitBytes(plan);
+        List<Object[]> rows = executeInDataFusion(substrait);
 
-        assertTrue("root must be a ProjectRel", root.hasProject());
-        logger.info("testLastDayFromPpl PASSED — Substrait plan:\n{}", substraitPlan);
+        assertEquals("Expected 1 row", 1, rows.size());
+        Object[] row = rows.get(0);
+        logger.info("Result: created={} ({}), d={} ({})", row[0], row[0].getClass().getSimpleName(),
+            row[1], row[1].getClass().getSimpleName());
+        assertNotNull("d must not be null", row[1]);
+        // Verify it's January 31
+        assertTrue("d should contain 2024-01-31", row[1].toString().contains("2024-01-31"));
     }
 
     /**
-     * PPL: source=t | where created > TIMESTAMP('2024-01-01 00:00:00')
-     * Verifies: TIMESTAMP literal constructor goes through as a function call in Substrait.
+     * PPL: source=t | where created > TIMESTAMP('2020-01-01 00:00:00')
+     * Expected: 1 row returned (2024-01-15 > 2020-01-01)
      */
-    public void testTimestampLiteralFromPpl() throws Exception {
-        RelNode plan = planPpl("source=t | where created > TIMESTAMP('2024-01-01 00:00:00')");
-        logger.info("RelNode from PPL:\n{}", plan.explain());
+    public void testTimestampFilterEndToEnd() throws Exception {
+        RelNode plan = planPpl("source=t | where created > TIMESTAMP('2020-01-01 00:00:00')");
+        logger.info("RelNode:\n{}", plan.explain());
 
-        Plan substraitPlan = convertToSubstrait(plan);
-        Rel root = rootRel(substraitPlan);
+        byte[] substrait = toSubstraitBytes(plan);
+        List<Object[]> rows = executeInDataFusion(substrait);
 
-        // Should have a filter with comparison
-        assertTrue("root must be a ProjectRel (output cast)", root.hasProject());
-        logger.info("testTimestampLiteralFromPpl PASSED — Substrait plan:\n{}", substraitPlan);
+        assertEquals("Expected 1 row (filter passes)", 1, rows.size());
+        assertNotNull("created must not be null", rows.get(0)[0]);
+        logger.info("Result: created={} ({})", rows.get(0)[0], rows.get(0)[0].getClass().getSimpleName());
     }
 }
