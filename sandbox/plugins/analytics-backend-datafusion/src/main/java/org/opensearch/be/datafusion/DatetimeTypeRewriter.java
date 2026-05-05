@@ -18,29 +18,59 @@ import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexShuttle;
+import org.apache.calcite.sql.SqlFunction;
+import org.apache.calcite.sql.SqlFunctionCategory;
+import org.apache.calcite.sql.SqlKind;
+import org.apache.calcite.sql.type.OperandTypes;
+import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlTypeFamily;
 import org.apache.calcite.sql.type.SqlTypeName;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 
 /**
  * Rewrites a RelNode plan to:
- * 1. Replace UDT return types on PPL datetime function RexCalls with standard Calcite datetime types
- * 2. Add a final LogicalProject that casts all datetime output fields to VARCHAR
- *
- * This enables clean Substrait conversion (isthmus handles standard types natively)
- * and satisfies PPL V2's requirement that datetime results are returned as strings.
+ * 1. Replace UDT return types on PPL datetime function RexCalls with standard Calcite datetime types,
+ *    AND replace the operator with a canonical singleton so Substrait Sig matching works.
+ * 2. Add a final LogicalProject that casts all datetime output fields to VARCHAR.
  */
 public class DatetimeTypeRewriter {
 
-    // PPL datetime functions whose return type should be replaced
-    private static final Set<String> DATETIME_FUNCTIONS = Set.of(
-        "DATE_ADD", "LAST_DAY", "DATE", "TIMESTAMP", "NOW"
+    // Canonical operator singletons — these MUST be the same objects used in
+    // DataFusionFragmentConvertor.ADDITIONAL_SCALAR_SIGS so that isthmus's
+    // Map<SqlOperator, FunctionFinder> lookup succeeds.
+    static final SqlFunction DATE_ADD_OP = new SqlFunction(
+        "DATE_ADD", SqlKind.OTHER_FUNCTION, ReturnTypes.ARG0_NULLABLE,
+        null, OperandTypes.ANY_ANY, SqlFunctionCategory.TIMEDATE
+    );
+    static final SqlFunction LAST_DAY_OP = new SqlFunction(
+        "LAST_DAY", SqlKind.OTHER_FUNCTION, ReturnTypes.ARG0_NULLABLE,
+        null, OperandTypes.ANY, SqlFunctionCategory.TIMEDATE
+    );
+    static final SqlFunction DATE_OP = new SqlFunction(
+        "DATE", SqlKind.OTHER_FUNCTION, ReturnTypes.DATE_NULLABLE,
+        null, OperandTypes.STRING, SqlFunctionCategory.TIMEDATE
+    );
+    static final SqlFunction TIMESTAMP_OP = new SqlFunction(
+        "TIMESTAMP", SqlKind.OTHER_FUNCTION, ReturnTypes.TIMESTAMP_NULLABLE,
+        null, OperandTypes.STRING, SqlFunctionCategory.TIMEDATE
+    );
+    static final SqlFunction NOW_OP = new SqlFunction(
+        "NOW", SqlKind.OTHER_FUNCTION, ReturnTypes.TIMESTAMP_NULLABLE,
+        null, OperandTypes.NILADIC, SqlFunctionCategory.TIMEDATE
     );
 
-    // Map function name to its standard Calcite return type
+    // Map operator name (uppercase) to canonical singleton
+    private static final Map<String, SqlFunction> CANONICAL_OPS = Map.of(
+        "DATE_ADD", DATE_ADD_OP,
+        "LAST_DAY", LAST_DAY_OP,
+        "DATE", DATE_OP,
+        "TIMESTAMP", TIMESTAMP_OP,
+        "NOW", NOW_OP
+    );
+
     private static SqlTypeName standardReturnType(String functionName) {
         return switch (functionName.toUpperCase()) {
             case "DATE" -> SqlTypeName.DATE;
@@ -50,13 +80,13 @@ public class DatetimeTypeRewriter {
     }
 
     /**
-     * Rewrite the plan: replace UDT types and add final VARCHAR cast project.
+     * Rewrite the plan: replace UDT types/operators and add final VARCHAR cast project.
      */
     public static RelNode rewrite(RelNode plan) {
         RexBuilder rexBuilder = plan.getCluster().getRexBuilder();
         RelDataTypeFactory typeFactory = plan.getCluster().getTypeFactory();
 
-        // Step 1: Replace UDT return types with standard Calcite types
+        // Step 1: Replace UDT return types and operators with canonical versions
         RelNode rewritten = plan.accept(new RelHomogeneousShuttle() {
             @Override
             public RelNode visit(RelNode other) {
@@ -86,15 +116,12 @@ public class DatetimeTypeRewriter {
         }
 
         if (hasCast == false) {
-            return plan; // No datetime fields in output, no need for extra project
+            return plan;
         }
 
         return LogicalProject.create(plan, List.of(), projects, fieldNames);
     }
 
-    /**
-     * RexShuttle that replaces UDT return types on datetime function calls.
-     */
     private static class DatetimeRexShuttle extends RexShuttle {
         private final RexBuilder rexBuilder;
         private final RelDataTypeFactory typeFactory;
@@ -106,21 +133,19 @@ public class DatetimeTypeRewriter {
 
         @Override
         public RexNode visitCall(RexCall call) {
-            // Visit children first
             RexCall visited = (RexCall) super.visitCall(call);
 
             String opName = visited.getOperator().getName().toUpperCase();
-            if (DATETIME_FUNCTIONS.contains(opName)) {
+            SqlFunction canonicalOp = CANONICAL_OPS.get(opName);
+            if (canonicalOp != null) {
                 SqlTypeName targetType = standardReturnType(opName);
                 if (targetType != null) {
                     RelDataType newType = typeFactory.createTypeWithNullability(
                         typeFactory.createSqlType(targetType),
                         visited.getType().isNullable()
                     );
-                    // Only replace if the current type is not already the standard type
-                    if (visited.getType().getSqlTypeName() != targetType) {
-                        return rexBuilder.makeCall(newType, visited.getOperator(), visited.getOperands());
-                    }
+                    // Replace both operator (for Sig matching) and return type (for Substrait type)
+                    return rexBuilder.makeCall(newType, canonicalOp, visited.getOperands());
                 }
             }
             return visited;

@@ -10,7 +10,7 @@ apply plugin: 'opensearch.internal-cluster-test'
 
 // SQL Unified Query API version (aligned with OpenSearch build version) — required by
 // the PPL transport plugin used in CoordinatorReduceIT.
-def sqlUnifiedQueryVersion = '3.6.0.0-SNAPSHOT'
+def sqlUnifiedQueryVersion = '3.7.0.0-SNAPSHOT'
 
 opensearchplugin {
   description = 'DataFusion native execution engine plugin for the query engine.'

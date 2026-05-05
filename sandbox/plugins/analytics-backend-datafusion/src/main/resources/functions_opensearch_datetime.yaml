@@ -9,8 +9,20 @@ scalar_functions:
           - name: ts
             value: precision_timestamp<P>
           - name: interval
+            value: interval_day<P>
+        return: precision_timestamp<P>
+      - args:
+          - name: ts
+            value: precision_timestamp<P>
+          - name: interval
             value: i32
         return: precision_timestamp<P>
+      - args:
+          - name: ts
+            value: timestamp
+          - name: interval
+            value: interval_day<P>
+        return: timestamp
       - args:
           - name: ts
             value: timestamp

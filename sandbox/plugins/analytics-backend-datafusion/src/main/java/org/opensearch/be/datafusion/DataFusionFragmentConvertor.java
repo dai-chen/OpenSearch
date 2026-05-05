@@ -24,11 +24,7 @@ import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.schema.ColumnStrategy;
-import org.apache.calcite.sql.SqlFunction;
-import org.apache.calcite.sql.SqlFunctionCategory;
 import org.apache.calcite.sql.SqlKind;
-import org.apache.calcite.sql.type.OperandTypes;
-import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -83,11 +79,11 @@ public class DataFusionFragmentConvertor implements FragmentConvertor {
     /** Maps custom functions to their Substrait extension names for Isthmus conversion. */
     private static final List<FunctionMappings.Sig> ADDITIONAL_SCALAR_SIGS = List.of(
         FunctionMappings.s(DelegatedPredicateFunction.FUNCTION, DelegatedPredicateFunction.NAME),
-        FunctionMappings.s(new SqlFunction("DATE_ADD", SqlKind.OTHER_FUNCTION, ReturnTypes.ARG0_NULLABLE, null, OperandTypes.ANY_ANY, SqlFunctionCategory.TIMEDATE), "date_add"),
-        FunctionMappings.s(new SqlFunction("LAST_DAY", SqlKind.OTHER_FUNCTION, ReturnTypes.ARG0_NULLABLE, null, OperandTypes.ANY, SqlFunctionCategory.TIMEDATE), "last_day"),
-        FunctionMappings.s(new SqlFunction("DATE", SqlKind.OTHER_FUNCTION, ReturnTypes.DATE_NULLABLE, null, OperandTypes.STRING, SqlFunctionCategory.TIMEDATE), "date"),
-        FunctionMappings.s(new SqlFunction("TIMESTAMP", SqlKind.OTHER_FUNCTION, ReturnTypes.TIMESTAMP_NULLABLE, null, OperandTypes.STRING, SqlFunctionCategory.TIMEDATE), "timestamp_parse"),
-        FunctionMappings.s(new SqlFunction("NOW", SqlKind.OTHER_FUNCTION, ReturnTypes.TIMESTAMP_NULLABLE, null, OperandTypes.NILADIC, SqlFunctionCategory.TIMEDATE), "now")
+        FunctionMappings.s(DatetimeTypeRewriter.DATE_ADD_OP, "date_add"),
+        FunctionMappings.s(DatetimeTypeRewriter.LAST_DAY_OP, "last_day"),
+        FunctionMappings.s(DatetimeTypeRewriter.DATE_OP, "date"),
+        FunctionMappings.s(DatetimeTypeRewriter.TIMESTAMP_OP, "timestamp_parse"),
+        FunctionMappings.s(DatetimeTypeRewriter.NOW_OP, "now")
     );
 
     private final SimpleExtension.ExtensionCollection extensions;
