@@ -94,6 +94,7 @@ pub async fn execute_query(
         .build();
 
     let ctx = SessionContext::new_with_state(state);
+    crate::datetime_udfs::register_datetime_udfs(&ctx);
 
     // Register table via ListingTable — all IO goes through object store
     let file_format = ParquetFormat::new();

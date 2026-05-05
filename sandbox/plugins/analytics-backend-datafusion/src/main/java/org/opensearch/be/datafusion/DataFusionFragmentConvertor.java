@@ -24,7 +24,11 @@ import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.schema.ColumnStrategy;
+import org.apache.calcite.sql.SqlFunction;
+import org.apache.calcite.sql.SqlFunctionCategory;
 import org.apache.calcite.sql.SqlKind;
+import org.apache.calcite.sql.type.OperandTypes;
+import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -76,9 +80,14 @@ public class DataFusionFragmentConvertor implements FragmentConvertor {
 
     private static final Logger LOGGER = LogManager.getLogger(DataFusionFragmentConvertor.class);
 
-    /** Maps DelegatedPredicateFunction to its Substrait extension name for Isthmus conversion. */
+    /** Maps custom functions to their Substrait extension names for Isthmus conversion. */
     private static final List<FunctionMappings.Sig> ADDITIONAL_SCALAR_SIGS = List.of(
-        FunctionMappings.s(DelegatedPredicateFunction.FUNCTION, DelegatedPredicateFunction.NAME)
+        FunctionMappings.s(DelegatedPredicateFunction.FUNCTION, DelegatedPredicateFunction.NAME),
+        FunctionMappings.s(new SqlFunction("DATE_ADD", SqlKind.OTHER_FUNCTION, ReturnTypes.ARG0_NULLABLE, null, OperandTypes.ANY_ANY, SqlFunctionCategory.TIMEDATE), "date_add"),
+        FunctionMappings.s(new SqlFunction("LAST_DAY", SqlKind.OTHER_FUNCTION, ReturnTypes.ARG0_NULLABLE, null, OperandTypes.ANY, SqlFunctionCategory.TIMEDATE), "last_day"),
+        FunctionMappings.s(new SqlFunction("DATE", SqlKind.OTHER_FUNCTION, ReturnTypes.DATE_NULLABLE, null, OperandTypes.STRING, SqlFunctionCategory.TIMEDATE), "date"),
+        FunctionMappings.s(new SqlFunction("TIMESTAMP", SqlKind.OTHER_FUNCTION, ReturnTypes.TIMESTAMP_NULLABLE, null, OperandTypes.STRING, SqlFunctionCategory.TIMEDATE), "timestamp_parse"),
+        FunctionMappings.s(new SqlFunction("NOW", SqlKind.OTHER_FUNCTION, ReturnTypes.TIMESTAMP_NULLABLE, null, OperandTypes.NILADIC, SqlFunctionCategory.TIMEDATE), "now")
     );
 
     private final SimpleExtension.ExtensionCollection extensions;
@@ -90,7 +99,8 @@ public class DataFusionFragmentConvertor implements FragmentConvertor {
     @Override
     public byte[] convertShardScanFragment(String tableName, RelNode fragment) {
         LOGGER.debug("Converting shard scan fragment for table [{}]", tableName);
-        return convertToSubstrait(fragment);
+        RelNode rewritten = DatetimeTypeRewriter.rewrite(fragment);
+        return convertToSubstrait(rewritten);
     }
 
     @Override
@@ -109,6 +119,7 @@ public class DataFusionFragmentConvertor implements FragmentConvertor {
         // isthmus visitor (which only knows about Calcite core / Logical RelNodes)
         // emits a ReadRel with the stage-input-id as the named table.
         RelNode rewritten = rewriteStageInputScans(fragment);
+        rewritten = DatetimeTypeRewriter.rewrite(rewritten);
         return convertToSubstrait(rewritten);
     }
 

@@ -15,6 +15,7 @@ pub mod api;
 pub mod cache;
 pub mod cross_rt_stream;
 pub mod custom_cache_manager;
+pub mod datetime_udfs;
 pub mod datafusion_query_config;
 pub mod eviction_policy;
 pub mod executor;
