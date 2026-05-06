@@ -139,8 +139,19 @@ public class DatetimeUdfPplIntegTests extends OpenSearchTestCase {
         );
         // Replace the leaf in the plan by rebuilding from bottom up
         RelNode rewritten = replaceLeafScan(relNode, replacement);
+
+        logger.info("══════════════════════════════════════════════════════════════");
+        logger.info("  [STEP 2] RelNode after table scan normalization:");
+        logger.info("══════════════════════════════════════════════════════════════\n{}", rewritten.explain());
+
         DataFusionFragmentConvertor convertor = new DataFusionFragmentConvertor(extensions);
-        return convertor.convertShardScanFragment("t", rewritten);
+        // convertShardScanFragment internally calls DatetimeTypeRewriter.rewrite() then Substrait conversion
+        byte[] substrait = convertor.convertShardScanFragment("t", rewritten);
+
+        logger.info("══════════════════════════════════════════════════════════════");
+        logger.info("  [STEP 3] Substrait plan produced: {} bytes", substrait.length);
+        logger.info("══════════════════════════════════════════════════════════════");
+        return substrait;
     }
 
     /** Recursively replace the leaf TableScan with the given replacement. */
@@ -251,16 +262,25 @@ public class DatetimeUdfPplIntegTests extends OpenSearchTestCase {
      * Expected: created = "2024-01-15..." (string), d = "2024-01-16..." (string, +1 day)
      */
     public void testDateAddEndToEnd() throws Exception {
-        RelNode plan = planPpl("source=t | eval d = DATE_ADD(created, INTERVAL 1 DAY)");
-        logger.info("RelNode:\n{}", plan.explain());
+        String ppl = "source=t | eval d = DATE_ADD(created, INTERVAL 1 DAY)";
+        logger.info("══════════════════════════════════════════════════════════════");
+        logger.info("  [STEP 1] PPL Query: {}", ppl);
+        logger.info("══════════════════════════════════════════════════════════════");
+
+        RelNode plan = planPpl(ppl);
+        logger.info("  [STEP 1] RelNode from UnifiedQueryPlanner (with UDT types):\n{}", plan.explain());
 
         byte[] substrait = toSubstraitBytes(plan);
+        logger.info("  [STEP 4] Executing Substrait plan in DataFusion...");
         List<Object[]> rows = executeInDataFusion(substrait);
 
+        logger.info("══════════════════════════════════════════════════════════════");
+        logger.info("  [STEP 5] DataFusion Results: {} row(s)", rows.size());
         assertEquals("Expected 1 row", 1, rows.size());
         Object[] row = rows.get(0);
-        logger.info("Result: created={} ({}), d={} ({})", row[0], row[0].getClass().getSimpleName(),
-            row[1], row[1].getClass().getSimpleName());
+        logger.info("    created = {} ({})", row[0], row[0].getClass().getSimpleName());
+        logger.info("    d       = {} ({})", row[1], row[1].getClass().getSimpleName());
+        logger.info("══════════════════════════════════════════════════════════════");
         assertNotNull("created must not be null", row[0]);
         assertNotNull("d must not be null", row[1]);
     }
@@ -270,18 +290,26 @@ public class DatetimeUdfPplIntegTests extends OpenSearchTestCase {
      * Expected: d = "2024-01-31..." (last day of January 2024)
      */
     public void testLastDayEndToEnd() throws Exception {
-        RelNode plan = planPpl("source=t | eval d = LAST_DAY(created)");
-        logger.info("RelNode:\n{}", plan.explain());
+        String ppl = "source=t | eval d = LAST_DAY(created)";
+        logger.info("══════════════════════════════════════════════════════════════");
+        logger.info("  [STEP 1] PPL Query: {}", ppl);
+        logger.info("══════════════════════════════════════════════════════════════");
+
+        RelNode plan = planPpl(ppl);
+        logger.info("  [STEP 1] RelNode from UnifiedQueryPlanner (with UDT types):\n{}", plan.explain());
 
         byte[] substrait = toSubstraitBytes(plan);
+        logger.info("  [STEP 4] Executing Substrait plan in DataFusion...");
         List<Object[]> rows = executeInDataFusion(substrait);
 
+        logger.info("══════════════════════════════════════════════════════════════");
+        logger.info("  [STEP 5] DataFusion Results: {} row(s)", rows.size());
         assertEquals("Expected 1 row", 1, rows.size());
         Object[] row = rows.get(0);
-        logger.info("Result: created={} ({}), d={} ({})", row[0], row[0].getClass().getSimpleName(),
-            row[1], row[1].getClass().getSimpleName());
+        logger.info("    created = {} ({})", row[0], row[0].getClass().getSimpleName());
+        logger.info("    d       = {} ({})", row[1], row[1].getClass().getSimpleName());
+        logger.info("══════════════════════════════════════════════════════════════");
         assertNotNull("d must not be null", row[1]);
-        // Verify it's January 31
         assertTrue("d should contain 2024-01-31", row[1].toString().contains("2024-01-31"));
     }
 
@@ -290,14 +318,23 @@ public class DatetimeUdfPplIntegTests extends OpenSearchTestCase {
      * Expected: 1 row returned (2024-01-15 > 2020-01-01)
      */
     public void testTimestampFilterEndToEnd() throws Exception {
-        RelNode plan = planPpl("source=t | where created > TIMESTAMP('2020-01-01 00:00:00')");
-        logger.info("RelNode:\n{}", plan.explain());
+        String ppl = "source=t | where created > TIMESTAMP('2020-01-01 00:00:00')";
+        logger.info("══════════════════════════════════════════════════════════════");
+        logger.info("  [STEP 1] PPL Query: {}", ppl);
+        logger.info("══════════════════════════════════════════════════════════════");
+
+        RelNode plan = planPpl(ppl);
+        logger.info("  [STEP 1] RelNode from UnifiedQueryPlanner (with UDT types):\n{}", plan.explain());
 
         byte[] substrait = toSubstraitBytes(plan);
+        logger.info("  [STEP 4] Executing Substrait plan in DataFusion...");
         List<Object[]> rows = executeInDataFusion(substrait);
 
+        logger.info("══════════════════════════════════════════════════════════════");
+        logger.info("  [STEP 5] DataFusion Results: {} row(s)", rows.size());
         assertEquals("Expected 1 row (filter passes)", 1, rows.size());
+        logger.info("    created = {} ({})", rows.get(0)[0], rows.get(0)[0].getClass().getSimpleName());
+        logger.info("══════════════════════════════════════════════════════════════");
         assertNotNull("created must not be null", rows.get(0)[0]);
-        logger.info("Result: created={} ({})", rows.get(0)[0], rows.get(0)[0].getClass().getSimpleName());
     }
 }

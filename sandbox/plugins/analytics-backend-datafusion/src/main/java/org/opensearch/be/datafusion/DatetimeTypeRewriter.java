@@ -25,6 +25,8 @@ import org.apache.calcite.sql.type.OperandTypes;
 import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlTypeFamily;
 import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -37,6 +39,8 @@ import java.util.Map;
  * 2. Add a final LogicalProject that casts all datetime output fields to VARCHAR.
  */
 public class DatetimeTypeRewriter {
+
+    private static final Logger LOGGER = LogManager.getLogger(DatetimeTypeRewriter.class);
 
     // Canonical operator singletons — these MUST be the same objects used in
     // DataFusionFragmentConvertor.ADDITIONAL_SCALAR_SIGS so that isthmus's
@@ -83,6 +87,8 @@ public class DatetimeTypeRewriter {
      * Rewrite the plan: replace UDT types/operators and add final VARCHAR cast project.
      */
     public static RelNode rewrite(RelNode plan) {
+        LOGGER.info("[DatetimeTypeRewriter] ═══ BEFORE rewrite ═══\n{}", plan.explain());
+
         RexBuilder rexBuilder = plan.getCluster().getRexBuilder();
         RelDataTypeFactory typeFactory = plan.getCluster().getTypeFactory();
 
@@ -95,8 +101,14 @@ public class DatetimeTypeRewriter {
             }
         });
 
+        LOGGER.info("[DatetimeTypeRewriter] ═══ AFTER type replacement (before output cast) ═══\n{}", rewritten.explain());
+
         // Step 2: Add final Project with CAST(datetime -> VARCHAR) for output
-        return addOutputCastProject(rewritten, rexBuilder, typeFactory);
+        RelNode result = addOutputCastProject(rewritten, rexBuilder, typeFactory);
+
+        LOGGER.info("[DatetimeTypeRewriter] ═══ AFTER output cast project ═══\n{}", result.explain());
+
+        return result;
     }
 
     private static RelNode addOutputCastProject(RelNode plan, RexBuilder rexBuilder, RelDataTypeFactory typeFactory) {
@@ -116,9 +128,11 @@ public class DatetimeTypeRewriter {
         }
 
         if (hasCast == false) {
+            LOGGER.info("[DatetimeTypeRewriter] No datetime fields in output — skipping output cast project");
             return plan;
         }
 
+        LOGGER.info("[DatetimeTypeRewriter] Adding CAST-to-VARCHAR for {} datetime output field(s)", fieldNames.size());
         return LogicalProject.create(plan, List.of(), projects, fieldNames);
     }
 
@@ -144,6 +158,8 @@ public class DatetimeTypeRewriter {
                         typeFactory.createSqlType(targetType),
                         visited.getType().isNullable()
                     );
+                    LOGGER.info("[DatetimeTypeRewriter] Rewriting {}({}) : {} → {}",
+                        opName, visited.getOperands(), visited.getType(), newType);
                     // Replace both operator (for Sig matching) and return type (for Substrait type)
                     return rexBuilder.makeCall(newType, canonicalOp, visited.getOperands());
                 }
