@@ -76,9 +76,14 @@ public class DataFusionFragmentConvertor implements FragmentConvertor {
 
     private static final Logger LOGGER = LogManager.getLogger(DataFusionFragmentConvertor.class);
 
-    /** Maps DelegatedPredicateFunction to its Substrait extension name for Isthmus conversion. */
+    /** Maps custom functions to their Substrait extension names for Isthmus conversion. */
     private static final List<FunctionMappings.Sig> ADDITIONAL_SCALAR_SIGS = List.of(
-        FunctionMappings.s(DelegatedPredicateFunction.FUNCTION, DelegatedPredicateFunction.NAME)
+        FunctionMappings.s(DelegatedPredicateFunction.FUNCTION, DelegatedPredicateFunction.NAME),
+        FunctionMappings.s(DatetimeTypeRewriter.DATE_ADD_OP, "date_add"),
+        FunctionMappings.s(DatetimeTypeRewriter.LAST_DAY_OP, "last_day"),
+        FunctionMappings.s(DatetimeTypeRewriter.DATE_OP, "date"),
+        FunctionMappings.s(DatetimeTypeRewriter.TIMESTAMP_OP, "timestamp_parse"),
+        FunctionMappings.s(DatetimeTypeRewriter.NOW_OP, "now")
     );
 
     private final SimpleExtension.ExtensionCollection extensions;
@@ -90,7 +95,8 @@ public class DataFusionFragmentConvertor implements FragmentConvertor {
     @Override
     public byte[] convertShardScanFragment(String tableName, RelNode fragment) {
         LOGGER.debug("Converting shard scan fragment for table [{}]", tableName);
-        return convertToSubstrait(fragment);
+        RelNode rewritten = DatetimeTypeRewriter.rewrite(fragment);
+        return convertToSubstrait(rewritten);
     }
 
     @Override
@@ -109,6 +115,7 @@ public class DataFusionFragmentConvertor implements FragmentConvertor {
         // isthmus visitor (which only knows about Calcite core / Logical RelNodes)
         // emits a ReadRel with the stage-input-id as the named table.
         RelNode rewritten = rewriteStageInputScans(fragment);
+        rewritten = DatetimeTypeRewriter.rewrite(rewritten);
         return convertToSubstrait(rewritten);
     }
 

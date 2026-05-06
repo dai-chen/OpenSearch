@@ -148,8 +148,11 @@ public class DataFusionPlugin extends Plugin implements SearchBackEndPlugin<Data
         ClassLoader previous = t.getContextClassLoader();
         try {
             t.setContextClassLoader(DataFusionPlugin.class.getClassLoader());
-            SimpleExtension.ExtensionCollection delegationExtensions = SimpleExtension.load(List.of("/delegation_functions.yaml"));
-            return DefaultExtensionCatalog.DEFAULT_COLLECTION.merge(delegationExtensions);
+            SimpleExtension.ExtensionCollection customExtensions = SimpleExtension.load(List.of(
+                "/delegation_functions.yaml",
+                "/functions_opensearch_datetime.yaml"
+            ));
+            return DefaultExtensionCatalog.DEFAULT_COLLECTION.merge(customExtensions);
         } finally {
             t.setContextClassLoader(previous);
         }

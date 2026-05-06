@@ -1,0 +1,67 @@
+%YAML 1.2
+---
+urn: extension:org.opensearch:functions_opensearch_datetime
+scalar_functions:
+  - name: date_add
+    description: Adds an interval to a timestamp, returning a new timestamp.
+    impls:
+      - args:
+          - name: ts
+            value: precision_timestamp<P>
+          - name: interval
+            value: interval_day<P>
+        return: precision_timestamp<P>
+      - args:
+          - name: ts
+            value: precision_timestamp<P>
+          - name: interval
+            value: i32
+        return: precision_timestamp<P>
+      - args:
+          - name: ts
+            value: timestamp
+          - name: interval
+            value: interval_day<P>
+        return: timestamp
+      - args:
+          - name: ts
+            value: timestamp
+          - name: interval
+            value: i32
+        return: timestamp
+  - name: last_day
+    description: Returns the last day of the month for the given timestamp.
+    impls:
+      - args:
+          - name: ts
+            value: precision_timestamp<P>
+        return: precision_timestamp<P>
+      - args:
+          - name: ts
+            value: timestamp
+        return: timestamp
+  - name: date
+    description: Parses a string value into a date.
+    impls:
+      - args:
+          - name: value
+            value: string
+        return: date
+  - name: timestamp_parse
+    description: Parses a string value into a timestamp.
+    impls:
+      - args:
+          - name: value
+            value: string
+        return: precision_timestamp<P>
+      - args:
+          - name: value
+            value: string
+        return: timestamp
+  - name: now
+    description: Returns the current timestamp.
+    impls:
+      - args: []
+        return: timestamp
+      - args: []
+        return: precision_timestamp<P>
