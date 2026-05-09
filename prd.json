@@ -1,0 +1,219 @@
+{
+  "project": "OpenSearch Analytics Engine — SQL Weekend Gap Attack",
+  "description": "Close S0/S1/M SQL-specific gaps from the v3 gap report (251/1867 baseline) by wiring missing functions and features through the OpenSearch analytics-engine pipeline. Each user story = one tier from the weekend plan at ~/.kiro/plans/opensearch-sql/2026-05-08-weekend-ralph-loop-plan.md. Every tier has its own branch (ralph/sql-t0-... through ralph/sql-t9-...). ralph.sh uses ONE inner worktree at ./work/ and switches the worktree's branch per iteration. Focus is the analytics-engine side only: enum registration, STANDARD_PROJECT_OPS, adapters, yaml signatures, and an E2E test that drives a RelNode through the pipeline (PPL -> CalciteRelNodeVisitor -> Substrait -> DataFusion) and asserts the result. Sql-plugin (opensearch-project/sql) changes are out of scope for this loop. Reference commits: f7bd4f492e1 (math scalar sweep), 239f4d92373 (string scalars). L-tier items (correlated subqueries, LATERAL, RECURSIVE CTEs, UNNEST-as-TVF, PIVOT, ROLLUP/CUBE/GROUPING SETS, INTERVAL arith, EXCLUDE) are skipped.",
+  "buildCommand": "./gradlew :sandbox:plugins:analytics-backend-datafusion:assemble :sandbox:plugins:analytics-engine:assemble",
+  "testCommand": "./gradlew :sandbox:plugins:analytics-backend-datafusion:test :sandbox:plugins:analytics-backend-datafusion:internalClusterTest",
+  "verifyCommand": "./gradlew :sandbox:qa:analytics-engine-rest:integTest",
+  "userStories": [
+    {
+      "id": "US-T0",
+      "title": "Tier T0 — Sugar Aggregate Functions",
+      "branchName": "ralph/sql-t0-sugar-aggregates",
+      "description": "As a SQL user on OpenSearch analytics-engine, I want COUNTIF, BIT_AND, BIT_OR, BIT_XOR, COVAR_POP, COVAR_SAMP, EVERY, SOME, and ANY_VALUE aggregates to run end-to-end so that agg.iq and within-distinct.iq gap tests advance.",
+      "acceptanceCriteria": [
+        "All work committed to branch ralph/sql-t0-sugar-aggregates",
+        "Each function registered as an aggregate in the analytics-engine (enum + STANDARD aggregate ops + adapter as needed)",
+        "Each function wired to the DataFusion native equivalent where one exists (bit_and, bit_or, bit_xor, covar_pop, covar_samp, bool_and for EVERY/SOME, first_value for ANY_VALUE); custom UDAF only if strictly required",
+        "An internalClusterTest case per function in sandbox/plugins/analytics-backend-datafusion/src/internalClusterTest/java/org/opensearch/be/datafusion/ that sends a PPL stats/eval string, lets CalciteRelNodeVisitor produce a RelNode with a LogicalAggregate, executes via UnifiedPPLExecuteAction, and asserts the returned row value",
+        "A REST IT case per function in sandbox/qa/analytics-engine-rest/src/test/java/org/opensearch/analytics/qa/ (new *AggregateFunctionsIT.java if needed) following the MathScalarFunctionsIT POST /_analytics/ppl pattern",
+        "One commit per function, conventional-commit format: feat(analytics-engine): add <FUNC> aggregate",
+        "Branch diff against main contains only this tier's files",
+        "Build passes",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-T1",
+      "title": "Tier T1 — Simple Scalar Functions",
+      "branchName": "ralph/sql-t1-simple-scalars",
+      "description": "As a SQL user, I want INITCAP, OCTET_LENGTH, OVERLAY, LOCALTIME, LOCALTIMESTAMP, and CARDINALITY scalars to run end-to-end so that functions.iq gap tests advance.",
+      "acceptanceCriteria": [
+        "All work committed to branch ralph/sql-t1-simple-scalars",
+        "Each function added to ScalarFunction enum in sandbox/libs/analytics-framework/src/main/java/org/opensearch/analytics/spi/ScalarFunction.java",
+        "Each function added to STANDARD_PROJECT_OPS in sandbox/plugins/analytics-backend-datafusion/src/main/java/org/opensearch/be/datafusion/DataFusionAnalyticsBackendPlugin.java",
+        "For trivial name-mapped functions use AbstractNameMappingAdapter; create a dedicated *Adapter.java only when semantics require rewriting",
+        "Substrait signatures added to sandbox/plugins/analytics-backend-datafusion/src/main/resources/opensearch_scalar_functions.yaml only if the function is not in isthmus default catalog",
+        "Each function has a REST IT case in sandbox/qa/analytics-engine-rest/src/test/java/org/opensearch/analytics/qa/StringScalarFunctionsIT.java (string) or a new DateTimeScalarFunctionsIT.java (LOCALTIME, LOCALTIMESTAMP) or ArrayScalarFunctionsIT.java (CARDINALITY) following the MathScalarFunctionsIT pattern",
+        "Each REST IT drives PPL -> CalciteRelNodeVisitor (LogicalProject w/ the new RexCall) -> Substrait -> DataFusion and asserts the returned cell value",
+        "Branch diff against main contains only this tier's functions",
+        "One commit per function",
+        "Build passes",
+        "Tests pass"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-T2",
+      "title": "Tier T2 — Window LAG/LEAD and Named WINDOW",
+      "branchName": "ralph/sql-t2-window-lag-lead",
+      "description": "As a SQL user, I want LAG, LEAD, and named WINDOW clauses to work end-to-end so that winagg.iq gap tests advance.",
+      "acceptanceCriteria": [
+        "All work committed to branch ralph/sql-t2-window-lag-lead",
+        "Before coding, locate the closest reference commit for window function wiring (grep for ROW_NUMBER / RANK / LogicalWindow in analytics-engine sources and git log)",
+        "LAG and LEAD wired through the analytics-engine windowing path (OpenSearchWindowRule or equivalent); recorded in notes which existing classes were extended vs added",
+        "Named WINDOW clause (SELECT ... OVER w ... WINDOW w AS (...)) resolves correctly through CalciteRelNodeVisitor to a LogicalWindow RelNode and executes",
+        "An internalClusterTest that sends a PPL string producing LogicalWindow, executes through the pipeline, and asserts the output row values for LAG(col, n) and LEAD(col, n)",
+        "A REST IT covering both LAG/LEAD and a named WINDOW example in sandbox/qa/analytics-engine-rest/ (new WindowFunctionsIT.java if absent)",
+        "Branch diff against main contains only this tier's files",
+        "One commit per feature (LAG, LEAD, named WINDOW)",
+        "Build passes",
+        "Tests pass"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-T3",
+      "title": "Tier T3 — String/Arg Aggregates",
+      "branchName": "ralph/sql-t3-string-arg-aggs",
+      "description": "As a SQL user, I want LISTAGG, STRING_AGG, GROUP_CONCAT, ARG_MAX, and ARG_MIN aggregates to work end-to-end so that agg.iq gap tests advance.",
+      "acceptanceCriteria": [
+        "All work committed to branch ralph/sql-t3-string-arg-aggs",
+        "Check DataFusion for native string_agg / arg_max / arg_min support; if native, wire directly; if not, implement a custom UDAF adapter in sandbox/plugins/analytics-backend-datafusion/ with unit coverage",
+        "Each function registered on the analytics-engine aggregate side with the right adapter",
+        "An internalClusterTest per function that builds a RelNode containing a LogicalAggregate with an AggregateCall for the new function, runs it through the pipeline, and asserts the concatenated / selected row value",
+        "A REST IT per function in sandbox/qa/analytics-engine-rest/ (extend AggregateFunctionsIT.java or create one)",
+        "LISTAGG and GROUP_CONCAT handle the ORDER BY and SEPARATOR sub-clauses or clearly document in notes why they are deferred",
+        "Branch diff against main contains only this tier's functions",
+        "One commit per function",
+        "Build passes",
+        "Tests pass"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-T4",
+      "title": "Tier T4 — QUALIFY Clause and FILTER (WHERE) on Aggregates",
+      "branchName": "ralph/sql-t4-qualify-filter",
+      "description": "As a SQL user, I want QUALIFY and FILTER(WHERE) on aggregates to work end-to-end so that qualify.iq and the FILTER subsets of agg.iq / pivot.iq / sub-query.iq / within-distinct.iq advance.",
+      "acceptanceCriteria": [
+        "All work committed to branch ralph/sql-t4-qualify-filter",
+        "Identify the RelNode shape Calcite produces for QUALIFY (LogicalFilter over LogicalWindow with the QUALIFY predicate) and for FILTER (AggregateCall.filterArg) — record findings in notes",
+        "Analytics-engine planner rules propagate AggregateCall.filterArg into the DataFusion aggregate (not dropped, not silently ignored)",
+        "QUALIFY RelNode shape is handled end-to-end (either by recognising it directly or by normalising to a supported shape before lowering)",
+        "An internalClusterTest that issues a PPL/SQL query with FILTER(WHERE x > 0) on COUNT, SUM, and AVG and asserts the filtered aggregate matches a hand-computed expected value",
+        "An internalClusterTest that issues a QUALIFY query (SELECT ... QUALIFY ROW_NUMBER() OVER (...) = 1) and asserts the row set",
+        "A REST IT covering both features in sandbox/qa/analytics-engine-rest/",
+        "Branch diff against main contains only QUALIFY/FILTER-related files",
+        "One commit for QUALIFY, one commit for FILTER",
+        "Build passes",
+        "Tests pass"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-T5",
+      "title": "Tier T5 — UNSIGNED Types and Integer Overflow Semantics",
+      "branchName": "ralph/sql-t5-unsigned-overflow",
+      "description": "As a SQL user, I want UNSIGNED INT and UNSIGNED BIGINT in CAST / DDL, and I want integer arithmetic to throw ArithmeticException on overflow instead of silently wrapping, so that unsigned.iq gap tests advance.",
+      "acceptanceCriteria": [
+        "All work committed to branch ralph/sql-t5-unsigned-overflow",
+        "Inspect unsigned.iq to confirm the exact error signatures currently produced — record examples in notes",
+        "Add UNSIGNED type support via Calcite RelDataTypeFactory customization or OpenSearchDataType extension; document the chosen approach in notes",
+        "Integer arithmetic on BIGINT / INT raises a clear OverflowException / ArithmeticException rather than wrapping, verified by a negative internalClusterTest case",
+        "An internalClusterTest that CAST(... AS UNSIGNED BIGINT) and performs arithmetic; RelNode carries the unsigned type through the pipeline without dropping to signed",
+        "A REST IT covering UNSIGNED CAST and an overflow-throws case in sandbox/qa/analytics-engine-rest/",
+        "Branch diff against main contains only type-system / arithmetic files",
+        "One commit for UNSIGNED types, one commit for overflow semantics",
+        "Build passes",
+        "Tests pass"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-T6",
+      "title": "Tier T6 — CAST(... AS type FORMAT 'pattern')",
+      "branchName": "ralph/sql-t6-cast-format",
+      "description": "As a SQL user, I want CAST with FORMAT patterns (date, timestamp, and numeric) to work end-to-end so that cast-with-format.iq advances from 222 passing toward the ~361 total. This is the highest-impact single tier.",
+      "acceptanceCriteria": [
+        "All work committed to branch ralph/sql-t6-cast-format",
+        "Run the cast-with-format.iq tests once before coding and capture the failing-query breakdown (by data-type and pattern family) in notes",
+        "Route Calcite's FORMAT-aware CAST through an analytics-engine adapter that rewrites to the DataFusion equivalent (to_char / strftime / to_timestamp / to_number as applicable)",
+        "Each of the three pattern families (date, timestamp, numeric) is covered by at least one internalClusterTest case that drives PPL -> RelNode -> Substrait -> DataFusion and asserts the string/number result",
+        "REST IT adds focused cases for the most common pattern strings in sandbox/qa/analytics-engine-rest/CastFormatIT.java",
+        "After this tier, cast-with-format.iq pass count strictly increases from 222 (recorded in notes)",
+        "Branch diff against main contains only CAST-FORMAT-related files",
+        "One commit per pattern family (date format, timestamp format, numeric format)",
+        "Build passes",
+        "Tests pass"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-T7",
+      "title": "Tier T7 — Regression Aggregates",
+      "branchName": "ralph/sql-t7-regression-aggs",
+      "description": "As a SQL user, I want REGR_COUNT, REGR_SXX, REGR_SYY, and REGR_SXY to work end-to-end so that regression aggregate gap tests in agg.iq and winagg.iq advance.",
+      "acceptanceCriteria": [
+        "All work committed to branch ralph/sql-t7-regression-aggs",
+        "Check DataFusion for native REGR_* support; if absent (likely), implement custom UDAFs in sandbox/plugins/analytics-backend-datafusion/rust/ following the existing UDAF patterns",
+        "Each REGR function is registered on the analytics-engine aggregate side with a matching adapter",
+        "An internalClusterTest per function builds a LogicalAggregate RelNode with the regression AggregateCall, runs it through the pipeline, and asserts against hand-computed expected values on a small fixed dataset",
+        "A REST IT per function in sandbox/qa/analytics-engine-rest/AggregateFunctionsIT.java (or new RegressionAggregateFunctionsIT.java)",
+        "Branch diff against main contains only this tier's functions",
+        "One commit per function",
+        "Build passes",
+        "Tests pass"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-T8",
+      "title": "Tier T8 — INTERSECT / EXCEPT (ALL and DISTINCT)",
+      "branchName": "ralph/sql-t8-set-ops",
+      "description": "As a SQL user, I want INTERSECT [ALL|DISTINCT] and EXCEPT [ALL|DISTINCT] to work end-to-end so that set-op.iq gap tests advance.",
+      "acceptanceCriteria": [
+        "All work committed to branch ralph/sql-t8-set-ops",
+        "Locate how LogicalUnion is handled in the analytics-engine planner; add symmetric handling for LogicalIntersect and LogicalMinus (ALL and DISTINCT variants)",
+        "DataFusion's native INTERSECT / EXCEPT is the preferred lowering; fallback anti-join rewrite only if needed and recorded in notes",
+        "An internalClusterTest per operator (INTERSECT, INTERSECT ALL, EXCEPT, EXCEPT ALL) that constructs a RelNode with the appropriate node, runs the pipeline, and asserts the result set",
+        "A REST IT covering the four variants in sandbox/qa/analytics-engine-rest/SetOpsIT.java (new file)",
+        "Branch diff against main contains only set-op-related files",
+        "One commit for INTERSECT variants, one commit for EXCEPT variants",
+        "Build passes",
+        "Tests pass"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-T9",
+      "title": "Tier T9 — WITHIN GROUP / WITHIN DISTINCT",
+      "branchName": "ralph/sql-t9-within-group",
+      "description": "As a SQL user, I want WITHIN GROUP (ORDER BY ...) on ordered-set aggregates and WITHIN DISTINCT(col) clauses to work end-to-end so that within-distinct.iq gap tests advance from 5.",
+      "acceptanceCriteria": [
+        "All work committed to branch ralph/sql-t9-within-group",
+        "Inspect how Calcite carries WITHIN GROUP ordering in AggregateCall (collation field) — record findings in notes",
+        "Analytics-engine planner propagates AggregateCall collation into the DataFusion aggregate plan",
+        "At least one ordered-set aggregate (e.g., PERCENTILE_CONT) works end-to-end with WITHIN GROUP (ORDER BY x)",
+        "WITHIN DISTINCT (col) works end-to-end for at least one test case",
+        "An internalClusterTest drives RelNode w/ AggregateCall.collation through the pipeline and asserts the returned value",
+        "A REST IT in sandbox/qa/analytics-engine-rest/WithinGroupIT.java (new file)",
+        "Branch diff against main contains only WITHIN-related files",
+        "One commit for WITHIN GROUP, one commit for WITHIN DISTINCT",
+        "Build passes",
+        "Tests pass"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

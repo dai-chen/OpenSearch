@@ -1,0 +1,38 @@
+# Codebase Patterns
+
+(Patterns discovered during implementation will be consolidated here. Update this section as the loop learns.)
+
+## Canonical E2E Test Patterns (seed)
+
+- **InternalClusterTest** — extend `BaseScalarFunctionIT` (scalars) or write a new base in the same package for aggregates / windows. Send PPL via `client().execute(UnifiedPPLExecuteAction.INSTANCE, new PPLRequest(ppl)).actionGet()`. Drives PPL → `CalciteRelNodeVisitor` → RelNode → Substrait → DataFusion end-to-end. Assert on `response.getRows().get(0)[0]` with helpers like `assertScalarLong` / `assertScalarDouble`.
+- **REST IT** — extend `AnalyticsRestTestCase`. Send `POST /_analytics/ppl` with JSON body `{"query": "<ppl>"}`. Parse `rows[0][0]`. Pattern exemplified by `sandbox/qa/analytics-engine-rest/src/test/java/org/opensearch/analytics/qa/MathScalarFunctionsIT.java`.
+- Every new function MUST have both test levels.
+
+## Registration Surfaces for a New Scalar Function
+
+1. Enum entry: `sandbox/libs/analytics-framework/src/main/java/org/opensearch/analytics/spi/ScalarFunction.java`.
+2. `STANDARD_PROJECT_OPS`: `sandbox/plugins/analytics-backend-datafusion/src/main/java/org/opensearch/be/datafusion/DataFusionAnalyticsBackendPlugin.java`.
+3. Adapter: prefer `AbstractNameMappingAdapter`; dedicated `*Adapter.java` only for semantic rewrites.
+4. Substrait signature: `sandbox/plugins/analytics-backend-datafusion/src/main/resources/opensearch_scalar_functions.yaml` — only if not in isthmus default catalog.
+5. REST IT case in `sandbox/qa/analytics-engine-rest/src/test/java/org/opensearch/analytics/qa/*ScalarFunctionsIT.java`.
+6. internalClusterTest case proving the RelNode pipeline.
+
+## Reference Commits
+
+- `f7bd4f492e1` — Adding sweep of MATH scalar functions. Best template for bulk scalar additions.
+- `239f4d92373` — Wiring PPL string scalar functions. Template for string funcs w/ custom Rust UDFs + adapters + REST IT.
+
+## Hard Rules from the Weekend Plan
+
+- Tier branches (ralph/sql-t0..t9) are created lazily from `main` / `origin/main` by `ralph.sh` when a story is first worked on — do not create them manually upfront.
+- DO NOT push unless `RALPH_PUSH=1` is exported. Default behaviour is local-only.
+- DO NOT delete or modify existing tests; only add new ones.
+- DO NOT touch files owned by other tiers.
+- DO NOT change the gap report files.
+- DO NOT attempt L-tier items (correlated subqueries, LATERAL, RECURSIVE CTEs, UNNEST-as-TVF, PIVOT, ROLLUP/CUBE/GROUPING SETS, INTERVAL arith, EXCLUDE).
+- DO NOT combine multiple tiers into one commit.
+- Each tier's commits follow conventional-commit style, one commit per function/feature.
+
+# Iteration Log
+
+<!-- Round summaries and human intervention notes will be appended here automatically. -->

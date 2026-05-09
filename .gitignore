@@ -75,3 +75,7 @@ doc-tools/missing-doclet/bin/
 **/Cargo.lock
 /sandbox/plugins/analytics-backend-datafusion/target/
 /sandbox/libs/dataformat-native/rust/target
+
+# Ralph loop (ralph/sql-setup branch only)
+/work/
+/STOP_RALPH
