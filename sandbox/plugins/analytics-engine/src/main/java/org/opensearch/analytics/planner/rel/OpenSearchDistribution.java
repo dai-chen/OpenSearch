@@ -97,6 +97,15 @@ public class OpenSearchDistribution implements RelDistribution {
         return locality;
     }
 
+    /**
+     * This distribution with its partitioning keys replaced, everything else preserved. Used when an
+     * operator passes a hash partitioning through to its output but the key columns move to different
+     * ordinals — e.g. a {@code Project} that reorders or drops columns.
+     */
+    public OpenSearchDistribution withKeys(List<Integer> newKeys) {
+        return new OpenSearchDistribution(traitDef, locality, type, List.copyOf(newKeys), tableId, shardCount, partitionCount);
+    }
+
     public Integer getTableId() {
         return tableId;
     }
