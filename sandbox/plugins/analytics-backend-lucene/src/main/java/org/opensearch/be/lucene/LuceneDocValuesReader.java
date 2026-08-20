@@ -10,7 +10,7 @@ package org.opensearch.be.lucene;
 
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.FieldVector;
-import org.apache.arrow.vector.VarCharVector;
+import org.apache.arrow.vector.ViewVarCharVector;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
@@ -109,7 +109,13 @@ abstract class LuceneDocValuesReader {
 
         @Override
         Field arrowField() {
-            return new Field(fieldName(), new FieldType(true, ArrowType.Utf8.INSTANCE, null), null);
+            // Utf8View, not Utf8: DataFusion types string columns as Utf8View, and a batch handed to
+            // it — either as its scan leaf or onward to a stage input derived from its plan — must
+            // match or the native side rejects it ("expected Utf8View but found Utf8"). The two
+            // layouts are not byte-identical, so this has to be the emitted type, not just a
+            // declaration. See DatafusionReduceSink#typesMatch for the same equivalence on the
+            // reduce path.
+            return new Field(fieldName(), new FieldType(true, ArrowType.Utf8View.INSTANCE, null), null);
         }
 
         @Override
@@ -119,7 +125,7 @@ abstract class LuceneDocValuesReader {
             // no values for the field at all.
             SortedSetDocValues values = DocValues.getSortedSet(leaf, fieldName());
             return (docId, rowIndex, vector) -> {
-                VarCharVector out = (VarCharVector) vector;
+                ViewVarCharVector out = (ViewVarCharVector) vector;
                 if (values.advanceExact(docId) == false) {
                     out.setNull(rowIndex);
                     return;

@@ -13,6 +13,7 @@ import org.apache.lucene.search.QueryCache;
 import org.apache.lucene.search.QueryCachingPolicy;
 import org.opensearch.analytics.spi.CommonExecutionContext;
 import org.opensearch.analytics.spi.ShuffleBufferRegistry;
+import org.opensearch.analytics.spi.ValueScanProducer;
 import org.opensearch.core.common.io.stream.NamedWriteableRegistry;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.IndexSettings;
@@ -41,6 +42,7 @@ public class ShardScanExecutionContext implements CommonExecutionContext {
     private QueryCachingPolicy queryCachingPolicy;
     private ShardId shardId;
     private boolean hasPartialAggregate;
+    private ValueScanProducer valueScanProducer;
 
     /**
      * Constructs an execution context.
@@ -171,5 +173,18 @@ public class ShardScanExecutionContext implements CommonExecutionContext {
 
     public void setHasPartialAggregate(boolean hasPartialAggregate) {
         this.hasPartialAggregate = hasPartialAggregate;
+    }
+
+    /**
+     * The {@link ValueScanProducer} that accepted this shard's reader, or {@code null} when no
+     * registered back-end can act as a value source for it. A back-end whose own storage reader is
+     * absent uses this to obtain the shard's rows; see {@link ValueScanProducer}.
+     */
+    public ValueScanProducer getValueScanProducer() {
+        return valueScanProducer;
+    }
+
+    public void setValueScanProducer(ValueScanProducer valueScanProducer) {
+        this.valueScanProducer = valueScanProducer;
     }
 }

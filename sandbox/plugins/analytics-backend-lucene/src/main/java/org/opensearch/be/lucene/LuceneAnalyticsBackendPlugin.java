@@ -32,6 +32,7 @@ import org.opensearch.analytics.spi.FragmentInstructionHandlerFactory;
 import org.opensearch.analytics.spi.ScalarFunction;
 import org.opensearch.analytics.spi.ScanCapability;
 import org.opensearch.analytics.spi.SearchExecEngineProvider;
+import org.opensearch.analytics.spi.ValueScanProducer;
 import org.opensearch.index.engine.exec.IndexReaderProvider;
 import org.opensearch.index.query.QueryBuilder;
 import org.opensearch.index.query.QueryShardContext;
@@ -192,9 +193,11 @@ public class LuceneAnalyticsBackendPlugin implements AnalyticsSearchBackendPlugi
     );
 
     private final LucenePlugin plugin;
+    private final ValueScanProducer valueScanProducer;
 
     public LuceneAnalyticsBackendPlugin(LucenePlugin plugin) {
         this.plugin = plugin;
+        this.valueScanProducer = new LuceneValueScanProducer(plugin);
     }
 
     @Override
@@ -283,6 +286,15 @@ public class LuceneAnalyticsBackendPlugin implements AnalyticsSearchBackendPlugi
     @Override
     public FragmentInstructionHandlerFactory getInstructionHandlerFactory() {
         return new LuceneInstructionHandlerFactory(plugin);
+    }
+
+    /**
+     * Lucene as a scan <em>source</em> for another back-end: accepted only on a shard publishing real
+     * doc values, so a composite index's postings-only secondary is never mistaken for a value source.
+     */
+    @Override
+    public ValueScanProducer getValueScanProducer() {
+        return valueScanProducer;
     }
 
     @Override

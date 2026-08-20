@@ -21,12 +21,7 @@ import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.DocIdSetIterator;
-import org.apache.lucene.search.ScoreMode;
-import org.apache.lucene.search.Scorer;
-import org.apache.lucene.search.Weight;
-import org.apache.lucene.util.Bits;
 import org.opensearch.analytics.backend.EngineResultStream;
 import org.opensearch.analytics.backend.SearchExecEngine;
 import org.opensearch.analytics.backend.ShardScanExecutionContext;
@@ -141,55 +136,11 @@ final class LuceneSearchExecEngine implements SearchExecEngine<ShardScanExecutio
      */
     private EngineResultStream executeValueScan(ShardScanExecutionContext context) throws IOException {
         List<String> columnNames = state.outputColumnNames();
-        if (columnNames.isEmpty()) {
-            throw new IllegalStateException("Lucene value scan dispatched with no output columns");
-        }
-        List<LuceneDocValuesReader> readers = new ArrayList<>(columnNames.size());
-        List<Field> fields = new ArrayList<>(columnNames.size());
-        for (String columnName : columnNames) {
-            LuceneDocValuesReader reader = LuceneDocValuesReader.forField(columnName, context.getMapperService());
-            readers.add(reader);
-            fields.add(reader.arrowField());
-        }
-        Schema schema = new Schema(fields);
-
-        Weight weight = state.searcher().createWeight(state.searcher().rewrite(state.filterQuery()), ScoreMode.COMPLETE_NO_SCORES, 1.0f);
-        List<LeafReaderContext> leaves = state.searcher().getIndexReader().leaves();
+        List<LuceneDocValuesReader> readers = LuceneValueScanProducer.readers(columnNames, context);
+        Schema schema = new Schema(LuceneValueScanProducer.arrowFields(readers));
 
         EngineResultStream stream = export(context.getAllocator(), schema, (root, allocator) -> {
-            root.allocateNew();
-            int rowIndex = 0;
-            for (LeafReaderContext leaf : leaves) {
-                Scorer scorer = weight.scorer(leaf);
-                if (scorer == null) {
-                    continue;
-                }
-                Bits liveDocs = leaf.reader().getLiveDocs();
-                List<LuceneDocValuesReader.LeafCursor> cursors = new ArrayList<>(readers.size());
-                for (LuceneDocValuesReader reader : readers) {
-                    cursors.add(reader.open(leaf.reader()));
-                }
-                DocIdSetIterator docs = scorer.iterator();
-                for (int docId = docs.nextDoc(); docId != DocIdSetIterator.NO_MORE_DOCS; docId = docs.nextDoc()) {
-                    if (liveDocs != null && liveDocs.get(docId) == false) {
-                        continue;
-                    }
-                    if (rowIndex >= MAX_VALUE_SCAN_ROWS) {
-                        throw new IllegalStateException(
-                            "Lucene value scan on shard "
-                                + context.getShardId()
-                                + " exceeded the single-batch limit of "
-                                + MAX_VALUE_SCAN_ROWS
-                                + " rows"
-                        );
-                    }
-                    for (int col = 0; col < cursors.size(); col++) {
-                        cursors.get(col).append(docId, rowIndex, root.getVector(col));
-                    }
-                    rowIndex++;
-                }
-            }
-            root.setRowCount(rowIndex);
+            int rowIndex = LuceneValueScanProducer.scanInto(state.searcher(), state.filterQuery(), readers, root, context.getShardId());
             LOGGER.debug(
                 "[lucene-value-scan] shardId={} query={} columns={} rows={}",
                 context.getShardId(),

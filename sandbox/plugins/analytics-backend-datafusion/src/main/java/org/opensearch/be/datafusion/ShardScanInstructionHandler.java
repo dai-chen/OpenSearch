@@ -14,6 +14,7 @@ import org.opensearch.analytics.spi.CommonExecutionContext;
 import org.opensearch.analytics.spi.FilterTreeShape;
 import org.opensearch.analytics.spi.FragmentInstructionHandler;
 import org.opensearch.analytics.spi.ShardScanInstructionNode;
+import org.opensearch.analytics.spi.ValueScanProducer;
 import org.opensearch.be.datafusion.nativelib.NativeBridge;
 import org.opensearch.be.datafusion.nativelib.SessionContextHandle;
 import org.opensearch.index.engine.dataformat.DataFormatRegistry;
@@ -49,6 +50,14 @@ public class ShardScanInstructionHandler implements FragmentInstructionHandler<S
             if (dfReader != null) break;
         }
         if (dfReader == null) {
+            // No native reader for this shard's storage. If another back-end can hand us the rows as
+            // Arrow batches, run the fragment over those instead: a worker-mode session (no shard view,
+            // no listing table) plus a streaming table registered under the same name the Substrait
+            // plan's NamedTable references, so nothing above the leaf changes.
+            ValueScanProducer producer = context.getValueScanProducer();
+            if (producer != null) {
+                return ProducerFedScan.open(plugin, context, node, producer);
+            }
             throw new IllegalStateException("No DatafusionReader available in the acquired reader");
         }
 
