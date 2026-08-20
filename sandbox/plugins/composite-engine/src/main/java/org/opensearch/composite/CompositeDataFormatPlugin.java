@@ -324,6 +324,16 @@ public class CompositeDataFormatPlugin extends Plugin implements DataFormatPlugi
                 }
 
                 Settings.Builder out = Settings.builder();
+                // Only fill in composite defaults for an index that actually uses a pluggable data
+                // format. Stamping them onto every index made ordinary Lucene indices carry
+                // index.composite.primary_data_format=parquet in their metadata, which the analytics
+                // planner's FieldStorageResolver reads as "this index's doc values live in parquet" —
+                // so it picked the parquet backend for a shard holding nothing but Lucene segments.
+                // The validation above still runs for every index, so an explicitly-supplied value
+                // that conflicts with the cluster default is rejected exactly as before.
+                if (usesPluggableDataFormat(templateAndRequestSettings) == false) {
+                    return Settings.EMPTY;
+                }
                 if (PRIMARY_DATA_FORMAT.exists(templateAndRequestSettings) == false) {
                     out.put(PRIMARY_DATA_FORMAT.getKey(), clusterPrimary);
                 }
@@ -333,6 +343,16 @@ public class CompositeDataFormatPlugin extends Plugin implements DataFormatPlugi
                 return out.build();
             }
         });
+    }
+
+    /**
+     * Whether the index being created opts in to a pluggable data format, i.e. carries both
+     * {@code index.pluggable.dataformat.enabled=true} and a non-empty
+     * {@code index.pluggable.dataformat}. Composite's per-index defaults are meaningless otherwise.
+     */
+    private static boolean usesPluggableDataFormat(Settings templateAndRequestSettings) {
+        return IndexSettings.PLUGGABLE_DATAFORMAT_ENABLED_SETTING.get(templateAndRequestSettings)
+            && IndexSettings.PLUGGABLE_DATAFORMAT_VALUE_SETTING.get(templateAndRequestSettings).isEmpty() == false;
     }
 
     @Override

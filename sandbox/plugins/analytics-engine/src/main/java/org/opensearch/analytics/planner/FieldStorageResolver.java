@@ -56,10 +56,15 @@ public class FieldStorageResolver {
 
     @SuppressWarnings("unchecked")
     public FieldStorageResolver(IndexMetadata indexMetadata) {
-        String indexName = indexMetadata.getIndex().getName();
-        String primaryFormat = indexMetadata.getSettings().get(PRIMARY_DATA_FORMAT_SETTING, LUCENE_FORMAT);
-        // Lucene is index-viable only when it's the primary or in the secondary list.
+        // No composite primary format → this is a plain index and its doc values are in the shard's
+        // own Lucene segments. That is reported as LUCENE_DOC_VALUES_FORMAT rather than "lucene" so a
+        // backend can declare value-producing / numeric-filter capabilities for it without also
+        // claiming them for a composite index's Lucene secondary (postings only, no numerics).
+        String primaryFormat = indexMetadata.getSettings().get(PRIMARY_DATA_FORMAT_SETTING, FieldStorageInfo.LUCENE_DOC_VALUES_FORMAT);
+        // Lucene is index-viable when it holds the inverted index: it is the primary (either spelling),
+        // or it appears in the secondary list.
         boolean luceneAvailable = LUCENE_FORMAT.equals(primaryFormat)
+            || FieldStorageInfo.LUCENE_DOC_VALUES_FORMAT.equals(primaryFormat)
             || indexMetadata.getSettings().getAsList(SECONDARY_DATA_FORMATS_SETTING).contains(LUCENE_FORMAT);
 
         // A mapping-less index (created empty, never written to) declares no fields — it

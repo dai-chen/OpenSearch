@@ -95,6 +95,24 @@ public class CompositeDataFormatPluginTests extends OpenSearchTestCase {
 
     // ---- IndexSettingProvider behavior ----
 
+    /**
+     * Settings a create-index request carries when it opts in to the composite data format. The
+     * provider only fills in composite defaults for such an index — an ordinary Lucene index must
+     * not come out of index creation claiming a parquet primary format, because the analytics
+     * planner reads that as "this index's doc values live in parquet".
+     */
+    private static Settings compositeOptIn() {
+        return Settings.builder()
+            .put(IndexSettings.PLUGGABLE_DATAFORMAT_ENABLED_SETTING.getKey(), true)
+            .put(IndexSettings.PLUGGABLE_DATAFORMAT_VALUE_SETTING.getKey(), "composite")
+            .build();
+    }
+
+    /** As {@link #compositeOptIn()} plus the caller's own explicit settings. */
+    private static Settings compositeOptInPlus(Settings extra) {
+        return Settings.builder().put(compositeOptIn()).put(extra).build();
+    }
+
     public void testIndexSettingProviderReturnsEmptyBeforeCreateComponents() {
         CompositeDataFormatPlugin plugin = new CompositeDataFormatPlugin();
         IndexSettingProvider provider = singleProvider(plugin);
@@ -102,6 +120,28 @@ public class CompositeDataFormatPluginTests extends OpenSearchTestCase {
         // contribute nothing rather than NPE — allowing fallback to per-setting defaults.
         Settings out = provider.getAdditionalIndexSettings("some-index", false, Settings.EMPTY);
         assertEquals(Settings.EMPTY, out);
+    }
+
+    /**
+     * An index that does not opt in to a pluggable data format gets no composite settings at all.
+     * Regression guard for the analytics-engine plain-index scan: stamping
+     * {@code index.composite.primary_data_format=parquet} onto an ordinary Lucene index made
+     * {@code FieldStorageResolver} report parquet doc values for a shard that has none.
+     */
+    public void testIndexSettingProviderStampsNothingForNonPluggableIndex() {
+        CompositeDataFormatPlugin plugin = new CompositeDataFormatPlugin();
+        Settings clusterBag = Settings.builder()
+            .put(CompositeDataFormatPlugin.CLUSTER_PRIMARY_DATA_FORMAT.getKey(), "parquet")
+            .putList(CompositeDataFormatPlugin.CLUSTER_SECONDARY_DATA_FORMATS.getKey(), "arrow")
+            .build();
+        injectClusterService(plugin, clusterBag);
+
+        IndexSettingProvider provider = singleProvider(plugin);
+        Settings out = provider.getAdditionalIndexSettings("plain-index", false, Settings.EMPTY);
+
+        assertEquals(Settings.EMPTY, out);
+        assertFalse(CompositeDataFormatPlugin.PRIMARY_DATA_FORMAT.exists(out));
+        assertFalse(CompositeDataFormatPlugin.SECONDARY_DATA_FORMATS.exists(out));
     }
 
     public void testIndexSettingProviderStampsBothClusterDefaultsWhenIndexLevelAbsent() {
@@ -113,7 +153,7 @@ public class CompositeDataFormatPluginTests extends OpenSearchTestCase {
         injectClusterService(plugin, clusterBag);
 
         IndexSettingProvider provider = singleProvider(plugin);
-        Settings out = provider.getAdditionalIndexSettings("some-index", false, Settings.EMPTY);
+        Settings out = provider.getAdditionalIndexSettings("some-index", false, compositeOptIn());
 
         assertEquals("parquet", CompositeDataFormatPlugin.PRIMARY_DATA_FORMAT.get(out));
         assertEquals(List.of("arrow"), CompositeDataFormatPlugin.SECONDARY_DATA_FORMATS.get(out));
@@ -127,7 +167,9 @@ public class CompositeDataFormatPluginTests extends OpenSearchTestCase {
             .build();
         injectClusterService(plugin, clusterBag);
 
-        Settings requestOrTemplate = Settings.builder().put(CompositeDataFormatPlugin.PRIMARY_DATA_FORMAT.getKey(), "lucene").build();
+        Settings requestOrTemplate = compositeOptInPlus(
+            Settings.builder().put(CompositeDataFormatPlugin.PRIMARY_DATA_FORMAT.getKey(), "lucene").build()
+        );
 
         IndexSettingProvider provider = singleProvider(plugin);
         Settings out = provider.getAdditionalIndexSettings("some-index", false, requestOrTemplate);
@@ -144,9 +186,9 @@ public class CompositeDataFormatPluginTests extends OpenSearchTestCase {
             .build();
         injectClusterService(plugin, clusterBag);
 
-        Settings requestOrTemplate = Settings.builder()
-            .putList(CompositeDataFormatPlugin.SECONDARY_DATA_FORMATS.getKey(), "parquet")
-            .build();
+        Settings requestOrTemplate = compositeOptInPlus(
+            Settings.builder().putList(CompositeDataFormatPlugin.SECONDARY_DATA_FORMATS.getKey(), "parquet").build()
+        );
 
         IndexSettingProvider provider = singleProvider(plugin);
         Settings out = provider.getAdditionalIndexSettings("some-index", false, requestOrTemplate);
@@ -163,10 +205,12 @@ public class CompositeDataFormatPluginTests extends OpenSearchTestCase {
             .build();
         injectClusterService(plugin, clusterBag);
 
-        Settings requestOrTemplate = Settings.builder()
-            .put(CompositeDataFormatPlugin.PRIMARY_DATA_FORMAT.getKey(), "lucene")
-            .putList(CompositeDataFormatPlugin.SECONDARY_DATA_FORMATS.getKey(), "parquet")
-            .build();
+        Settings requestOrTemplate = compositeOptInPlus(
+            Settings.builder()
+                .put(CompositeDataFormatPlugin.PRIMARY_DATA_FORMAT.getKey(), "lucene")
+                .putList(CompositeDataFormatPlugin.SECONDARY_DATA_FORMATS.getKey(), "parquet")
+                .build()
+        );
 
         IndexSettingProvider provider = singleProvider(plugin);
         Settings out = provider.getAdditionalIndexSettings("some-index", false, requestOrTemplate);
@@ -195,7 +239,7 @@ public class CompositeDataFormatPluginTests extends OpenSearchTestCase {
 
         IndexSettingProvider provider = singleProvider(plugin);
 
-        Settings first = provider.getAdditionalIndexSettings("idx-1", false, Settings.EMPTY);
+        Settings first = provider.getAdditionalIndexSettings("idx-1", false, compositeOptIn());
         assertEquals("parquet", CompositeDataFormatPlugin.PRIMARY_DATA_FORMAT.get(first));
         assertTrue(CompositeDataFormatPlugin.SECONDARY_DATA_FORMATS.get(first).isEmpty());
 
@@ -207,7 +251,7 @@ public class CompositeDataFormatPluginTests extends OpenSearchTestCase {
                 .build()
         );
 
-        Settings second = provider.getAdditionalIndexSettings("idx-2", false, Settings.EMPTY);
+        Settings second = provider.getAdditionalIndexSettings("idx-2", false, compositeOptIn());
         assertEquals("parquet", CompositeDataFormatPlugin.PRIMARY_DATA_FORMAT.get(second));
         assertEquals(List.of("arrow"), CompositeDataFormatPlugin.SECONDARY_DATA_FORMATS.get(second));
     }

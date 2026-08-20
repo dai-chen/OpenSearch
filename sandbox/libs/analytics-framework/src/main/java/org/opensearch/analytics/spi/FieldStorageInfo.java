@@ -22,6 +22,19 @@ import java.util.List;
  */
 public class FieldStorageInfo {
 
+    /**
+     * Doc-value format name for a plain (non-composite) index, whose values live in the shard's own
+     * Lucene doc values.
+     *
+     * <p>Deliberately distinct from {@code "lucene"}, which means "Lucene holds an inverted index for
+     * this field". On a composite parquet-primary index those two are different physical things: the
+     * values are in parquet and Lucene has postings only, and Lucene does not index numerics at all.
+     * Keeping the names apart lets the Lucene backend declare value-producing scan and numeric filter
+     * capabilities that resolve <em>only</em> for plain indices, without making the planner think the
+     * composite secondary segment can answer them.
+     */
+    public static final String LUCENE_DOC_VALUES_FORMAT = "lucene_doc_values";
+
     private final String fieldName;
     private final String mappingType;
     private final FieldType fieldType;

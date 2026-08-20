@@ -260,6 +260,12 @@ public class OpenSearchFilterRule extends RelOptRule {
                 // a HAVING clause filters on a stats-derived column.
                 fieldViable = new HashSet<>(childViableBackends);
                 fieldViable.retainAll(registry.filterBackendsAnyFormat(function, storageInfo.getFieldType()));
+                // ...and only backends that can evaluate an expression over a stream rather than over
+                // their own storage. filterBackendsAnyFormat ignores formats by design, so a
+                // storage-scoped capability would otherwise make a scan-only backend (Lucene) look
+                // viable for a column that has no field to look up — it then fails at compile time
+                // ("Rewrite first" out of RangeQueryBuilder) on e.g. `stats count() as c | where c > 10`.
+                fieldViable.retainAll(registry.executionCapableBackends());
             } else {
                 // Format-aware: backends that can access this field's storage (doc values + index).
                 // A backend is viable only if it has the field in its own storage formats — ensuring

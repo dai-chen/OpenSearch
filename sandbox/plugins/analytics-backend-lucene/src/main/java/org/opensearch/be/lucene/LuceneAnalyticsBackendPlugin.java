@@ -23,6 +23,7 @@ import org.opensearch.analytics.spi.DelegatedPredicateSerializer;
 import org.opensearch.analytics.spi.DelegatedSubtreeConvertor;
 import org.opensearch.analytics.spi.DelegationType;
 import org.opensearch.analytics.spi.EngineCapability;
+import org.opensearch.analytics.spi.FieldStorageInfo;
 import org.opensearch.analytics.spi.FieldType;
 import org.opensearch.analytics.spi.FilterCapability;
 import org.opensearch.analytics.spi.FilterDelegationHandle;
@@ -117,6 +118,25 @@ public class LuceneAnalyticsBackendPlugin implements AnalyticsSearchBackendPlugi
 
     private static final Set<FieldType> KEYWORD_ONLY = Set.of(FieldType.KEYWORD);
 
+    /**
+     * Field types Lucene can materialise <em>values</em> for out of its own doc values, and filter on
+     * using its own points/terms. Deliberately separate from {@link #STANDARD_TYPES}: that set
+     * describes the <em>composite-secondary</em> Lucene segment, where values live in the parquet
+     * primary and numerics are not indexed at all. Widening {@code STANDARD_TYPES} to include LONG
+     * would make the planner pick Lucene for numeric filters on composite indices — exactly what
+     * {@code CountFastPathIT.testCountByNumericField_drivenByDataFusion} pins as DataFusion's job.
+     */
+    private static final Set<FieldType> DOC_VALUE_TYPES = Set.of(FieldType.KEYWORD, FieldType.LONG);
+
+    /**
+     * The doc-value format of a plain (non-composite) index — see
+     * {@link FieldStorageInfo#LUCENE_DOC_VALUES_FORMAT}. Scoping the value-producing and numeric
+     * filter capabilities to this format (rather than to {@code "lucene"}) is what confines them to
+     * plain indices: {@code FieldStorageResolver} reports it only when
+     * {@code index.composite.primary_data_format} is absent.
+     */
+    private static final Set<String> LUCENE_DOC_VALUE_FORMATS = Set.of(FieldStorageInfo.LUCENE_DOC_VALUES_FORMAT);
+
     private static final Set<FilterCapability> FILTER_CAPS;
     static {
         Set<FilterCapability> caps = new HashSet<>();
@@ -125,6 +145,14 @@ public class LuceneAnalyticsBackendPlugin implements AnalyticsSearchBackendPlugi
                 caps.add(new FilterCapability.Standard(op, KEYWORD_ONLY, LUCENE_FORMATS));
             } else {
                 caps.add(new FilterCapability.Standard(op, STANDARD_TYPES, LUCENE_FORMATS));
+            }
+            // Plain-index equivalents. Scoped to the plain-index doc-value format so numerics are
+            // filterable there (real points + doc values in the same segments) without becoming
+            // filterable on a composite index's Lucene secondary, which indexes no numerics.
+            if (op == ScalarFunction.LIKE) {
+                caps.add(new FilterCapability.Standard(op, KEYWORD_ONLY, LUCENE_DOC_VALUE_FORMATS));
+            } else {
+                caps.add(new FilterCapability.Standard(op, DOC_VALUE_TYPES, LUCENE_DOC_VALUE_FORMATS));
             }
         }
         for (ScalarFunction op : FULL_TEXT_OPS) {
@@ -140,11 +168,18 @@ public class LuceneAnalyticsBackendPlugin implements AnalyticsSearchBackendPlugi
      * types it accepts filters on — keyword / text / match_only_text. The Index
      * scan capability lets the planner mark Lucene viable as a driver for metadata-only
      * operations (count today, group-by-count and top-K terms in future) over scans whose
-     * fields are listed here. It does NOT imply Lucene can deliver row values; consumers
-     * needing values (Project, Sort) consult value-producing scan capabilities separately
-     * and self-restrict, which the chain-agreement filter at PlanForker enforces.
+     * fields are listed here. It does NOT imply Lucene can deliver row values.
+     *
+     * <p>The {@link ScanCapability.DocValues} cap is what makes Lucene a <em>value-producing</em>
+     * scan backend, and it only resolves for plain indices. Without it no backend can scan a plain
+     * index at all: its fields report {@code docValueFormats=["lucene_doc_values"]} and DataFusion
+     * only declares doc values over {@code parquet}, so {@code OpenSearchTableScanRule} would end up
+     * with an empty viable-backend list.
      */
-    private static final Set<ScanCapability> SCAN_CAPS = Set.of(new ScanCapability.Index(LUCENE_FORMATS, STANDARD_TYPES));
+    private static final Set<ScanCapability> SCAN_CAPS = Set.of(
+        new ScanCapability.Index(LUCENE_FORMATS, STANDARD_TYPES),
+        new ScanCapability.DocValues(LUCENE_DOC_VALUE_FORMATS, DOC_VALUE_TYPES)
+    );
 
     /**
      * Lucene drives count(*) and (in a follow-up) count(col) over fields it indexes.
@@ -215,7 +250,7 @@ public class LuceneAnalyticsBackendPlugin implements AnalyticsSearchBackendPlugi
     public FilterDelegationHandle getFilterDelegationHandle(List<DelegatedExpression> expressions, CommonExecutionContext ctx) {
         ShardScanExecutionContext shardCtx = (ShardScanExecutionContext) ctx;
         IndexReaderProvider.Reader reader = shardCtx.getReader();
-        LuceneReader luceneReader = reader.getReader(plugin.getDataFormat(), LuceneReader.class);
+        LuceneReader luceneReader = LuceneReaderResolver.resolve(reader, plugin.getDataFormat());
         // Shared per-reader searcher (see LuceneReader#searcher) — a fresh one here crashes the node
         // on self-union delegated scans.
         IndexSearcher searcher = luceneReader.searcher(shardCtx.getQueryCache(), shardCtx.getQueryCachingPolicy());

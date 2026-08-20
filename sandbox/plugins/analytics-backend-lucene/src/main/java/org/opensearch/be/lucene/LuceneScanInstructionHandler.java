@@ -55,54 +55,61 @@ final class LuceneScanInstructionHandler implements FragmentInstructionHandler<S
     ) {
         ShardScanExecutionContext shardCtx = (ShardScanExecutionContext) commonContext;
         IndexReaderProvider.Reader reader = shardCtx.getReader();
-        LuceneReader luceneReader = reader.getReader(plugin.getDataFormat(), LuceneReader.class);
+        LuceneReader luceneReader = LuceneReaderResolver.resolve(reader, plugin.getDataFormat());
         if (luceneReader == null) {
             throw new IllegalStateException("Lucene-driver fragment dispatched to a shard with no LuceneReader");
         }
+        // A plain (non-composite) shard has its doc values in the same segments as its postings, so
+        // the doc-values-less rewrites the composite secondary needs must not be applied there.
+        boolean compositeSecondary = LuceneReaderResolver.isPlainShardReader(reader, plugin.getDataFormat()) == false;
         // Shared per-reader searcher (see LuceneReader#searcher).
         IndexSearcher searcher = luceneReader.searcher(shardCtx.getQueryCache(), shardCtx.getQueryCachingPolicy());
-        Decoded decoded = decodeFragmentBytes(shardCtx, searcher);
+        Decoded decoded = decodeFragmentBytes(shardCtx, searcher, compositeSecondary);
         LOGGER.debug(
-            "[lucene-count] shardId={} filterQuery={} columnNames={}",
+            "[lucene-driver] shardId={} kind={} filterQuery={} columnNames={}",
             shardCtx.getShardId(),
+            decoded.kind,
             decoded.filterQuery,
             decoded.columnNames
         );
-        return new LuceneSearcherState(searcher, decoded.filterQuery, decoded.columnNames);
+        return new LuceneSearcherState(searcher, decoded.filterQuery, decoded.columnNames, decoded.kind);
     }
 
     /**
      * Deserializes the wire format produced by {@link LuceneFragmentConvertor#convertFragment}:
-     * {@code [columnNames String[]] [hasFilter boolean] [QueryBuilder NamedWriteable]?}.
-     * Empty bytes → no filter, no column names (legacy/defensive fallback that shouldn't
-     * happen on the Lucene-driver path but stays safe if the wire shape ever drifts).
+     * {@code [kind VInt] [columnNames String[]] [hasFilter boolean] [QueryBuilder NamedWriteable]?}.
+     * Empty bytes → count over MatchAllDocs with no column names (legacy/defensive fallback that
+     * shouldn't happen on the Lucene-driver path but stays safe if the wire shape ever drifts).
      */
-    private Decoded decodeFragmentBytes(ShardScanExecutionContext shardCtx, IndexSearcher searcher) {
+    private Decoded decodeFragmentBytes(ShardScanExecutionContext shardCtx, IndexSearcher searcher, boolean compositeSecondary) {
         byte[] bytes = shardCtx.getFragmentBytes();
         if (bytes == null || bytes.length == 0) {
-            return new Decoded(new MatchAllDocsQuery(), java.util.List.of());
+            return new Decoded(LuceneFragmentKind.COUNT, new MatchAllDocsQuery(), java.util.List.of());
         }
         try (StreamInput rawInput = StreamInput.wrap(bytes)) {
             StreamInput input = new NamedWriteableAwareStreamInput(rawInput, shardCtx.getNamedWriteableRegistry());
+            LuceneFragmentKind kind = LuceneFragmentKind.fromOrdinal(input.readVInt());
             java.util.List<String> columnNames = input.readStringList();
             boolean hasFilter = input.readBoolean();
             Query filterQuery;
             if (hasFilter) {
                 QueryShardContext qsc = LuceneAnalyticsBackendPlugin.buildMinimalQueryShardContext(shardCtx, searcher);
                 QueryBuilder queryBuilder = input.readNamedWriteable(QueryBuilder.class);
+                Query compiled = queryBuilder.toQuery(qsc);
                 // Rewrite FieldExistsQuery → postings-only equivalent for the doc-values-less
-                // lucene-secondary segment (same reason as the filter-delegation path). This covers
-                // the Lucene-driver scan path (count + non-count) executed by LuceneSearchExecEngine.
-                filterQuery = LuceneQueryConversionUtils.rewriteFieldExistsForSecondary(queryBuilder.toQuery(qsc));
+                // lucene-secondary segment. A plain shard has real doc values (and points), so the
+                // rewrite would be both unnecessary and wrong there — a numeric FieldExistsQuery
+                // turned into a TermRangeQuery matches nothing against a points-indexed field.
+                filterQuery = compositeSecondary ? LuceneQueryConversionUtils.rewriteFieldExistsForSecondary(compiled) : compiled;
             } else {
                 filterQuery = new MatchAllDocsQuery();
             }
-            return new Decoded(filterQuery, columnNames);
+            return new Decoded(kind, filterQuery, columnNames);
         } catch (IOException e) {
             throw new IllegalStateException("Failed to deserialize Lucene-driver fragment bytes", e);
         }
     }
 
-    private record Decoded(Query filterQuery, java.util.List<String> columnNames) {
+    private record Decoded(LuceneFragmentKind kind, Query filterQuery, java.util.List<String> columnNames) {
     }
 }

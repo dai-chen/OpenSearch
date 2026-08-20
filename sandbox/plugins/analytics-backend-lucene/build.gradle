@@ -32,6 +32,9 @@ configurations {
 configurations.all {
     resolutionStrategy {
         force "com.google.flatbuffers:flatbuffers-java:${versions.flatbuffers}"
+        // arrow-vector (added test-only for LuceneValueScanTests) drags in its own slf4j-api,
+        // which conflicts with the project-wide version on the test runtime classpath.
+        force "org.slf4j:slf4j-api:${versions.slf4j}"
     }
 }
 sourceSets.main.compileClasspath += configurations.calciteCompile
@@ -84,12 +87,26 @@ dependencies {
     testRuntimeOnly "org.apache.arrow:arrow-format:${versions.arrow}"
     testRuntimeOnly "com.google.flatbuffers:flatbuffers-java:${versions.flatbuffers}"
 
+    // Arrow on the unit-test classpath: the value-scan exec engine builds real Arrow vectors and
+    // exports them through the C-Data interface, so LuceneValueScanTests needs vector + an
+    // allocation manager. arrow-memory-unsafe is used rather than netty so no Netty unsafe flags
+    // are required in the test JVM.
+    testImplementation "org.apache.arrow:arrow-vector:${versions.arrow}"
+    testImplementation "org.apache.arrow:arrow-memory-core:${versions.arrow}"
+    testRuntimeOnly "org.apache.arrow:arrow-memory-unsafe:${versions.arrow}"
+
     // Calcite annotation compatibility
     testCompileOnly 'org.immutables:value-annotations:2.8.8'
 }
 
 test {
     systemProperty 'tests.security.manager', 'false'
+    // Arrow's allocator reads DirectByteBuffer internals; unsafe allocation manager avoids the
+    // Netty-specific flags the integration clusters set.
+    systemProperty 'arrow.allocation.manager.type', 'Unsafe'
+    systemProperty 'arrow.memory.debug.allocator', 'false'
+    jvmArgs '--add-opens=java.base/java.nio=ALL-UNNAMED'
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
 }
 
 tasks.withType(JavaCompile).configureEach {

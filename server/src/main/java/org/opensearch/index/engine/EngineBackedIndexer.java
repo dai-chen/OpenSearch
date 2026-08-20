@@ -8,14 +8,18 @@
 
 package org.opensearch.index.engine;
 
+import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexCommit;
 import org.apache.lucene.store.ByteBuffersDataOutput;
 import org.apache.lucene.store.ByteBuffersIndexOutput;
 import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.common.concurrent.GatedCloseable;
 import org.opensearch.common.unit.TimeValue;
+import org.opensearch.common.util.io.IOUtils;
 import org.opensearch.core.common.unit.ByteSizeValue;
 import org.opensearch.index.VersionType;
+import org.opensearch.index.engine.dataformat.DataFormat;
+import org.opensearch.index.engine.dataformat.FieldTypeCapabilities;
 import org.opensearch.index.engine.exec.Indexer;
 import org.opensearch.index.engine.exec.coord.CatalogSnapshot;
 import org.opensearch.index.engine.exec.coord.SegmentInfosCatalogSnapshot;
@@ -32,6 +36,7 @@ import org.opensearch.search.suggest.completion.CompletionStats;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.List;
+import java.util.Set;
 import java.util.function.BiFunction;
 
 /**
@@ -474,11 +479,117 @@ public class EngineBackedIndexer implements Indexer {
         );
     }
 
+    /**
+     * Acquires a point-in-time {@link Reader} over this (plain, single-format) shard: the engine's
+     * external {@link Engine.Searcher} supplies the Lucene {@link DirectoryReader}, and
+     * {@link Engine#acquireSnapshot()} supplies the {@link CatalogSnapshot} — for a Lucene-backed
+     * engine that is a {@link SegmentInfosCatalogSnapshot} over the reader-visible segments.
+     *
+     * <p>This is the non-composite counterpart of
+     * {@link DataFormatAwareEngine#acquireReader()}: there is exactly one data format ({@code
+     * lucene}) and no per-format {@code EngineReaderManager}, so the format→reader map is a single
+     * entry pointing at the shard's {@code DirectoryReader}.
+     *
+     * @return a gated closeable that releases both the searcher and the snapshot reference
+     */
     @Override
     public GatedCloseable<Reader> acquireReader() throws IOException {
-        // TODO: Replace with a reader backed by segment infos catalog snapshot and Lucene's Directory reader.
-        // For now we throw an exception as this is not yet implemented
-        throw new UnsupportedOperationException("acquireReader is not supported in EngineBackedIndexer");
+        ensureOpen();
+        Engine.Searcher searcher = engine.acquireSearcher("engine-backed-reader", Engine.SearcherScope.EXTERNAL);
+        GatedCloseable<CatalogSnapshot> snapshotRef = null;
+        try {
+            snapshotRef = engine.acquireSnapshot();
+            EngineBackedReader reader = new EngineBackedReader(searcher, snapshotRef);
+            return new GatedCloseable<>(reader, reader::close);
+        } catch (Exception e) {
+            IOUtils.closeWhileHandlingException(snapshotRef, searcher);
+            throw e;
+        }
+    }
+
+    /**
+     * Format key for a plain shard's Lucene index. {@link DataFormat} equality is defined solely on
+     * {@link DataFormat#name()}, so this instance is interchangeable as a map key with the descriptor
+     * the Lucene search back-end plugin registers — no compile-time dependency on that plugin.
+     */
+    private static final DataFormat LUCENE_FORMAT = new DataFormat() {
+        @Override
+        public String name() {
+            return "lucene";
+        }
+
+        @Override
+        public long priority() {
+            return 50L;
+        }
+
+        @Override
+        public Set<FieldTypeCapabilities> supportedFields() {
+            return Set.of();
+        }
+    };
+
+    /**
+     * A point-in-time {@link Reader} over a plain, Lucene-backed shard. Exposes the shard's
+     * {@link DirectoryReader} under the {@code lucene} data format and the engine's
+     * {@link CatalogSnapshot}. Closing releases the searcher and the snapshot reference.
+     *
+     * <p>Unlike {@code DataFormatAwareEngine.DataFormatAwareReader}, whose map values are
+     * plugin-supplied wrapper types, the value here is the bare Lucene {@link DirectoryReader}.
+     * Consumers wanting a richer per-format wrapper adapt it themselves from {@link #reader}.
+     *
+     * @opensearch.experimental
+     */
+    @ExperimentalApi
+    public static final class EngineBackedReader implements Reader {
+
+        private final Engine.Searcher searcher;
+        private final GatedCloseable<CatalogSnapshot> snapshotRef;
+
+        EngineBackedReader(Engine.Searcher searcher, GatedCloseable<CatalogSnapshot> snapshotRef) {
+            this.searcher = searcher;
+            this.snapshotRef = snapshotRef;
+        }
+
+        @Override
+        public CatalogSnapshot catalogSnapshot() {
+            return snapshotRef.get();
+        }
+
+        /** The shard's {@link DirectoryReader} for the {@code lucene} format, {@code null} otherwise. */
+        @Override
+        public Object reader(DataFormat format) {
+            return LUCENE_FORMAT.equals(format) ? searcher.getDirectoryReader() : null;
+        }
+
+        @Override
+        public <R> R getReader(DataFormat format, Class<R> readerType) {
+            Object reader = reader(format);
+            if (reader == null) {
+                return null;
+            }
+            if (readerType.isInstance(reader) == false) {
+                throw new IllegalArgumentException(
+                    "Reader for format ["
+                        + format.name()
+                        + "] is "
+                        + reader.getClass().getName()
+                        + ", expected "
+                        + readerType.getName()
+                );
+            }
+            return readerType.cast(reader);
+        }
+
+        /** The underlying searcher — shares the shard's query cache and caching policy. */
+        public Engine.Searcher searcher() {
+            return searcher;
+        }
+
+        @Override
+        public void close() throws IOException {
+            IOUtils.close(snapshotRef, searcher);
+        }
     }
 
     public Engine getEngine() {

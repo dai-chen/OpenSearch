@@ -97,15 +97,23 @@ final class LuceneFragmentConvertor implements FragmentConvertor {
 
     @Override
     public byte[] convertFragment(RelNode fragment) {
-        // Lucene-driver wire format: [columnNames StringCollection] [hasFilter boolean]
-        // [QueryBuilder NamedWriteable]?. Both ends are controlled (this convertor on the
-        // coordinator, LuceneScanInstructionHandler on the data node), so a tiny custom
-        // format is fine — beats threading column names through the InstructionNode.
-        // columnNames may be empty when the convertor runs against a non-count Lucene
-        // alternative kept around for delegation (e.g. DF drives, Lucene is the peer); the
-        // bytes are produced but the data node never invokes them — selector or runtime
-        // alternative-selection drops this plan before dispatch.
-        List<String> columnNames = extractAggCallNames(fragment);
+        // Lucene-driver wire format: [kind VInt] [columnNames StringCollection]
+        // [hasFilter boolean] [QueryBuilder NamedWriteable]?. Both ends are controlled (this
+        // convertor on the coordinator, LuceneScanInstructionHandler on the data node), so a tiny
+        // custom format is fine — beats threading column names through the InstructionNode.
+        //
+        // kind=COUNT      → columnNames are aggregate-call names; the data node fills each with
+        //                   IndexSearcher.count. This is the original shape.
+        // kind=VALUE_SCAN → columnNames are the fragment's output columns, read from doc values.
+        //                   Chosen for any Aggregate-free fragment; the data node resolves each name
+        //                   against its MapperService, so no types travel on the wire.
+        //
+        // An Aggregate-free fragment also arises as the *input* subtree of the partial-agg split on
+        // the count path; attachPartialAggOnTop rewrites those bytes back to kind=COUNT.
+        LuceneFragmentKind kind = findAggregate(fragment) != null ? LuceneFragmentKind.COUNT : LuceneFragmentKind.VALUE_SCAN;
+        List<String> columnNames = kind == LuceneFragmentKind.COUNT
+            ? extractAggCallNames(fragment)
+            : fragment.getRowType().getFieldNames();
         QueryBuilder filterQuery = null;
         Filter filter = findFilter(fragment);
         if (filter != null) {
@@ -119,6 +127,7 @@ final class LuceneFragmentConvertor implements FragmentConvertor {
         }
         byte[] bytes;
         try (BytesStreamOutput out = new BytesStreamOutput()) {
+            out.writeVInt(kind.ordinal());
             out.writeStringCollection(columnNames);
             if (filterQuery == null) {
                 out.writeBoolean(false);
@@ -130,8 +139,73 @@ final class LuceneFragmentConvertor implements FragmentConvertor {
         } catch (IOException e) {
             throw new IllegalStateException("Failed to serialize Lucene-driver fragment", e);
         }
-        LOGGER.debug("[lucene-count] convertFragment columnNames={} filterQuery={} bytes={}", columnNames, filterQuery, bytes.length);
+        LOGGER.debug(
+            "[lucene-driver] convertFragment kind={} columnNames={} filterQuery={} bytes={}",
+            kind,
+            columnNames,
+            filterQuery,
+            bytes.length
+        );
         return bytes;
+    }
+
+    /**
+     * True iff the fragment is a shape the Lucene driver can materialise row <em>values</em> for:
+     * no Aggregate anywhere in the chain, and every output column is physically readable from
+     * Lucene doc values on this index (i.e. its {@link FieldStorageInfo#getDocValueFormats()}
+     * contains {@code lucene}).
+     *
+     * <p>The doc-value-format check is what keeps this off composite indices. There, a keyword
+     * column's doc values live in the parquet primary ({@code docValueFormats=["parquet"]}) while
+     * Lucene holds only postings, so Lucene must stay a metadata-only driver and
+     * {@link LuceneShardPreference} must keep vetoing value-shaped fragments. On a plain index every
+     * field reports {@code docValueFormats=["lucene"]} and the check passes.
+     *
+     * <p>Read by {@link LuceneShardPreference} to score value-scan fragments.
+     */
+    static boolean isValueScanFastPath(RelNode fragment) {
+        if (findAggregate(fragment) != null) {
+            return false;
+        }
+        List<FieldStorageInfo> outputStorage = outputFieldStorageOf(fragment);
+        if (outputStorage == null || outputStorage.isEmpty()) {
+            return false;
+        }
+        if (outputStorage.size() != fragment.getRowType().getFieldCount()) {
+            return false;
+        }
+        for (FieldStorageInfo field : outputStorage) {
+            if (field.isDerived()) {
+                return false;
+            }
+            if (field.getDocValueFormats().contains(FieldStorageInfo.LUCENE_DOC_VALUES_FORMAT) == false) {
+                return false;
+            }
+            if (LuceneDocValuesReader.isSupported(field.getFieldType()) == false) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** The fragment root's own output field storage, or {@code null} when it isn't an OpenSearch node. */
+    private static List<FieldStorageInfo> outputFieldStorageOf(RelNode fragment) {
+        return fragment instanceof OpenSearchRelNode osNode ? osNode.getOutputFieldStorage() : null;
+    }
+
+    /** First {@link Aggregate} on the linear input chain, or {@code null}. */
+    private static Aggregate findAggregate(RelNode root) {
+        RelNode current = root;
+        while (current != null) {
+            if (current instanceof Aggregate agg) {
+                return agg;
+            }
+            if (current.getInputs().isEmpty()) {
+                return null;
+            }
+            current = current.getInputs().getFirst();
+        }
+        return null;
     }
 
     /**
@@ -179,11 +253,14 @@ final class LuceneFragmentConvertor implements FragmentConvertor {
             columnNames.add(call.getName());
         }
 
-        // Read past the inner columnNames StringCollection to get the byte offset of the
-        // hasFilter + optional QueryBuilder tail. We then copy the tail verbatim into the new
-        // bytes prefixed by the aggregate's column names.
+        // Read past the inner kind + columnNames to get the byte offset of the hasFilter +
+        // optional QueryBuilder tail. We then copy the tail verbatim into the new bytes prefixed
+        // by kind=COUNT and the aggregate's column names. The inner bytes are normally
+        // kind=VALUE_SCAN (the split input subtree carries no Aggregate); attaching a partial
+        // aggregate turns the fragment back into a count, hence the kind rewrite.
         int tailOffset;
         try (StreamInput in = StreamInput.wrap(innerBytes)) {
+            in.readVInt();       // discard inner kind; the attached aggregate makes this a COUNT
             in.readStringList(); // discard inner columnNames; we'll write the agg names instead
             tailOffset = innerBytes.length - in.available();
         } catch (IOException e) {
@@ -191,6 +268,7 @@ final class LuceneFragmentConvertor implements FragmentConvertor {
         }
 
         try (BytesStreamOutput out = new BytesStreamOutput()) {
+            out.writeVInt(LuceneFragmentKind.COUNT.ordinal());
             out.writeStringCollection(columnNames);
             out.writeBytes(innerBytes, tailOffset, innerBytes.length - tailOffset);
             byte[] bytes = BytesReference.toBytes(out.bytes());
