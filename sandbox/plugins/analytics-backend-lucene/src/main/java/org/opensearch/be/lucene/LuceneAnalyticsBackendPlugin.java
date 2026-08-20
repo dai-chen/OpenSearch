@@ -250,7 +250,11 @@ public class LuceneAnalyticsBackendPlugin implements AnalyticsSearchBackendPlugi
     public FilterDelegationHandle getFilterDelegationHandle(List<DelegatedExpression> expressions, CommonExecutionContext ctx) {
         ShardScanExecutionContext shardCtx = (ShardScanExecutionContext) ctx;
         IndexReaderProvider.Reader reader = shardCtx.getReader();
-        LuceneReader luceneReader = LuceneReaderResolver.resolve(reader, plugin.getDataFormat());
+        LuceneReaderAdapter.Resolved resolved = plugin.readerAdapter().resolve(reader);
+        if (resolved == null) {
+            throw new IllegalStateException("Lucene filter delegation dispatched to a shard with no LuceneReader");
+        }
+        LuceneReader luceneReader = resolved.reader();
         // Shared per-reader searcher (see LuceneReader#searcher) — a fresh one here crashes the node
         // on self-union delegated scans.
         IndexSearcher searcher = luceneReader.searcher(shardCtx.getQueryCache(), shardCtx.getQueryCachingPolicy());

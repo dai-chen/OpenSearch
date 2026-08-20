@@ -17,7 +17,6 @@ import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.NumericDocValues;
-import org.apache.lucene.index.SortedDocValues;
 import org.apache.lucene.index.SortedNumericDocValues;
 import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.util.BytesRef;
@@ -81,9 +80,7 @@ abstract class LuceneDocValuesReader {
         }
         MappedFieldType fieldType = mapperService.fieldType(columnName);
         if (fieldType == null) {
-            throw new IllegalStateException(
-                "Lucene value scan cannot resolve column [" + columnName + "] to a mapped field on this shard"
-            );
+            throw new IllegalStateException("Lucene value scan cannot resolve column [" + columnName + "] to a mapped field on this shard");
         }
         if (fieldType.hasDocValues() == false) {
             throw new IllegalStateException("Lucene value scan requires doc values on column [" + columnName + "]");
@@ -175,9 +172,4 @@ abstract class LuceneDocValuesReader {
         }
     }
 
-    /** Unused today; kept so a future SORTED-only keyword producer has an obvious hook. */
-    @SuppressWarnings("unused")
-    private static BytesRef firstTerm(SortedDocValues values, int docId) throws IOException {
-        return values.advanceExact(docId) ? values.lookupOrd(values.ordValue()) : null;
-    }
 }

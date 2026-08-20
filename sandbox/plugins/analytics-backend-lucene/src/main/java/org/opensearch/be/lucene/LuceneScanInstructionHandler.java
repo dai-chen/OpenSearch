@@ -55,16 +55,14 @@ final class LuceneScanInstructionHandler implements FragmentInstructionHandler<S
     ) {
         ShardScanExecutionContext shardCtx = (ShardScanExecutionContext) commonContext;
         IndexReaderProvider.Reader reader = shardCtx.getReader();
-        LuceneReader luceneReader = LuceneReaderResolver.resolve(reader, plugin.getDataFormat());
-        if (luceneReader == null) {
+        LuceneReaderAdapter.Resolved resolved = plugin.readerAdapter().resolve(reader);
+        if (resolved == null) {
             throw new IllegalStateException("Lucene-driver fragment dispatched to a shard with no LuceneReader");
         }
-        // A plain (non-composite) shard has its doc values in the same segments as its postings, so
-        // the doc-values-less rewrites the composite secondary needs must not be applied there.
-        boolean compositeSecondary = LuceneReaderResolver.isPlainShardReader(reader, plugin.getDataFormat()) == false;
+        LuceneReader luceneReader = resolved.reader();
         // Shared per-reader searcher (see LuceneReader#searcher).
         IndexSearcher searcher = luceneReader.searcher(shardCtx.getQueryCache(), shardCtx.getQueryCachingPolicy());
-        Decoded decoded = decodeFragmentBytes(shardCtx, searcher, compositeSecondary);
+        Decoded decoded = decodeFragmentBytes(shardCtx, searcher, resolved.hasDocValues());
         LOGGER.debug(
             "[lucene-driver] shardId={} kind={} filterQuery={} columnNames={}",
             shardCtx.getShardId(),
@@ -81,7 +79,7 @@ final class LuceneScanInstructionHandler implements FragmentInstructionHandler<S
      * Empty bytes → count over MatchAllDocs with no column names (legacy/defensive fallback that
      * shouldn't happen on the Lucene-driver path but stays safe if the wire shape ever drifts).
      */
-    private Decoded decodeFragmentBytes(ShardScanExecutionContext shardCtx, IndexSearcher searcher, boolean compositeSecondary) {
+    private Decoded decodeFragmentBytes(ShardScanExecutionContext shardCtx, IndexSearcher searcher, boolean hasDocValues) {
         byte[] bytes = shardCtx.getFragmentBytes();
         if (bytes == null || bytes.length == 0) {
             return new Decoded(LuceneFragmentKind.COUNT, new MatchAllDocsQuery(), java.util.List.of());
@@ -97,10 +95,12 @@ final class LuceneScanInstructionHandler implements FragmentInstructionHandler<S
                 QueryBuilder queryBuilder = input.readNamedWriteable(QueryBuilder.class);
                 Query compiled = queryBuilder.toQuery(qsc);
                 // Rewrite FieldExistsQuery → postings-only equivalent for the doc-values-less
-                // lucene-secondary segment. A plain shard has real doc values (and points), so the
-                // rewrite would be both unnecessary and wrong there — a numeric FieldExistsQuery
-                // turned into a TermRangeQuery matches nothing against a points-indexed field.
-                filterQuery = compositeSecondary ? LuceneQueryConversionUtils.rewriteFieldExistsForSecondary(compiled) : compiled;
+                // lucene-secondary segment. A format that carries real doc values (and points) needs
+                // no rewrite, and it would be wrong there — a numeric FieldExistsQuery turned into a
+                // TermRangeQuery matches nothing against a points-indexed field. The decision comes
+                // from the format id that published the reader, so it cannot disagree with the format
+                // the planner resolved capabilities against.
+                filterQuery = hasDocValues ? compiled : LuceneQueryConversionUtils.rewriteFieldExistsForSecondary(compiled);
             } else {
                 filterQuery = new MatchAllDocsQuery();
             }

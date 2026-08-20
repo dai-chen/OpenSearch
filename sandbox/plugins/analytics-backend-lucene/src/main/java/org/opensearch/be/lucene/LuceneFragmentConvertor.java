@@ -102,18 +102,16 @@ final class LuceneFragmentConvertor implements FragmentConvertor {
         // convertor on the coordinator, LuceneScanInstructionHandler on the data node), so a tiny
         // custom format is fine — beats threading column names through the InstructionNode.
         //
-        // kind=COUNT      → columnNames are aggregate-call names; the data node fills each with
-        //                   IndexSearcher.count. This is the original shape.
+        // kind=COUNT → columnNames are aggregate-call names; the data node fills each with
+        // IndexSearcher.count. This is the original shape.
         // kind=VALUE_SCAN → columnNames are the fragment's output columns, read from doc values.
-        //                   Chosen for any Aggregate-free fragment; the data node resolves each name
-        //                   against its MapperService, so no types travel on the wire.
+        // Chosen for any Aggregate-free fragment; the data node resolves each name
+        // against its MapperService, so no types travel on the wire.
         //
         // An Aggregate-free fragment also arises as the *input* subtree of the partial-agg split on
         // the count path; attachPartialAggOnTop rewrites those bytes back to kind=COUNT.
         LuceneFragmentKind kind = findAggregate(fragment) != null ? LuceneFragmentKind.COUNT : LuceneFragmentKind.VALUE_SCAN;
-        List<String> columnNames = kind == LuceneFragmentKind.COUNT
-            ? extractAggCallNames(fragment)
-            : fragment.getRowType().getFieldNames();
+        List<String> columnNames = kind == LuceneFragmentKind.COUNT ? extractAggCallNames(fragment) : fragment.getRowType().getFieldNames();
         QueryBuilder filterQuery = null;
         Filter filter = findFilter(fragment);
         if (filter != null) {

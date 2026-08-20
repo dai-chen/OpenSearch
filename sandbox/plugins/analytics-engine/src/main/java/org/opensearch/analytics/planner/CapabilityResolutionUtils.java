@@ -50,11 +50,7 @@ public final class CapabilityResolutionUtils {
             }
         }
         if (result.isEmpty()) {
-            for (AnalyticsSearchBackendPlugin backend : registry.getBackends()) {
-                if (backend.getExchangeSinkProvider() != null) {
-                    result.add(backend.name());
-                }
-            }
+            result.addAll(registry.executionCapableBackends());
         }
         if (result.isEmpty()) {
             throw new IllegalStateException(

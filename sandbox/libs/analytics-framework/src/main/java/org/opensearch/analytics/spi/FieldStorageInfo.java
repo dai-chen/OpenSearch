@@ -9,6 +9,7 @@
 package org.opensearch.analytics.spi;
 
 import org.apache.calcite.sql.type.SqlTypeName;
+import org.opensearch.index.engine.dataformat.DataFormatNames;
 
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -32,8 +33,11 @@ public class FieldStorageInfo {
      * Keeping the names apart lets the Lucene backend declare value-producing scan and numeric filter
      * capabilities that resolve <em>only</em> for plain indices, without making the planner think the
      * composite secondary segment can answer them.
+     *
+     * <p>Aliases {@link DataFormatNames#LUCENE_DOC_VALUES} so the planner-side id and the id a plain
+     * shard publishes its reader under are one symbol rather than two equal string literals.
      */
-    public static final String LUCENE_DOC_VALUES_FORMAT = "lucene_doc_values";
+    public static final String LUCENE_DOC_VALUES_FORMAT = DataFormatNames.LUCENE_DOC_VALUES;
 
     private final String fieldName;
     private final String mappingType;

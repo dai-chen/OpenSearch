@@ -197,12 +197,7 @@ public class LuceneValueScanTests extends OpenSearchTestCase {
      * Mirrors what {@code LuceneScanInstructionHandler} assembles on the data node.
      */
     private List<List<Object>> runValueScan(List<String> columns, Query filter) throws IOException {
-        LuceneSearcherState state = new LuceneSearcherState(
-            new IndexSearcher(reader),
-            filter,
-            columns,
-            LuceneFragmentKind.VALUE_SCAN
-        );
+        LuceneSearcherState state = new LuceneSearcherState(new IndexSearcher(reader), filter, columns, LuceneFragmentKind.VALUE_SCAN);
         ShardScanExecutionContext context = new ShardScanExecutionContext("test_index", null, null);
         context.setAllocator(allocator);
         context.setMapperService(mapperService());

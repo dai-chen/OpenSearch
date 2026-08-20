@@ -30,7 +30,31 @@ import static org.hamcrest.Matchers.instanceOf;
  */
 public class EngineBackedIndexerReaderTests extends IndexShardTestCase {
 
-    /** {@link DataFormat} is equal by name, so this stands in for the Lucene plugin's descriptor. */
+    /**
+     * {@link DataFormat} is equal by name, so this stands in for the descriptor a value-producing
+     * back-end looks the reader up with. A plain shard publishes under
+     * {@link org.opensearch.index.engine.dataformat.DataFormatNames#LUCENE_DOC_VALUES}, not
+     * {@code lucene}: the distinct id is what lets a consumer tell real doc values from a composite
+     * index's postings-only Lucene secondary by format id alone.
+     */
+    private static final DataFormat LUCENE_DOC_VALUES = new DataFormat() {
+        @Override
+        public String name() {
+            return "lucene_doc_values";
+        }
+
+        @Override
+        public long priority() {
+            return 50L;
+        }
+
+        @Override
+        public Set<FieldTypeCapabilities> supportedFields() {
+            return Set.of();
+        }
+    };
+
+    /** The inverted-index id. A plain shard must NOT answer under this one — see the field above. */
     private static final DataFormat LUCENE = new DataFormat() {
         @Override
         public String name() {
@@ -65,13 +89,17 @@ public class EngineBackedIndexerReaderTests extends IndexShardTestCase {
                 assertNotNull("acquireReader must not return a null reader", reader);
 
                 // The whole point of Phase 1: a value-producing backend can reach real Lucene data.
-                Object raw = reader.reader(LUCENE);
-                assertThat("lucene format must resolve to a DirectoryReader", raw, instanceOf(DirectoryReader.class));
+                Object raw = reader.reader(LUCENE_DOC_VALUES);
+                assertThat("lucene_doc_values format must resolve to a DirectoryReader", raw, instanceOf(DirectoryReader.class));
                 DirectoryReader directoryReader = (DirectoryReader) raw;
                 assertEquals("all three indexed docs must be visible", 3, directoryReader.numDocs());
 
                 // Typed accessor agrees with the untyped one.
-                assertSame(raw, reader.getReader(LUCENE, DirectoryReader.class));
+                assertSame(raw, reader.getReader(LUCENE_DOC_VALUES, DirectoryReader.class));
+
+                // The two Lucene ids are distinct: a plain shard answers only for doc values, so a
+                // consumer can pick its adapter by format id without inspecting the value's type.
+                assertNull("a plain shard must not answer under the inverted-index id", reader.reader(LUCENE));
 
                 // A real CatalogSnapshot comes for free via Engine#acquireSnapshot (rung A1) —
                 // no need to synthesize one over Lucene segments (rung A2).
@@ -100,13 +128,13 @@ public class EngineBackedIndexerReaderTests extends IndexShardTestCase {
                 GatedCloseable<IndexReaderProvider.Reader> second = readerProvider.acquireReader()
             ) {
                 assertNotSame(first.get(), second.get());
-                assertEquals(1, ((DirectoryReader) first.get().reader(LUCENE)).numDocs());
-                assertEquals(1, ((DirectoryReader) second.get().reader(LUCENE)).numDocs());
+                assertEquals(1, ((DirectoryReader) first.get().reader(LUCENE_DOC_VALUES)).numDocs());
+                assertEquals(1, ((DirectoryReader) second.get().reader(LUCENE_DOC_VALUES)).numDocs());
             }
 
             // Still usable after both were released — the shard's searcher refcount is balanced.
             try (GatedCloseable<IndexReaderProvider.Reader> third = readerProvider.acquireReader()) {
-                assertEquals(1, ((DirectoryReader) third.get().reader(LUCENE)).numDocs());
+                assertEquals(1, ((DirectoryReader) third.get().reader(LUCENE_DOC_VALUES)).numDocs());
             }
         } finally {
             closeShards(shard);

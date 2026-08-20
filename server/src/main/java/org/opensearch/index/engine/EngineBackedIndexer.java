@@ -19,6 +19,7 @@ import org.opensearch.common.util.io.IOUtils;
 import org.opensearch.core.common.unit.ByteSizeValue;
 import org.opensearch.index.VersionType;
 import org.opensearch.index.engine.dataformat.DataFormat;
+import org.opensearch.index.engine.dataformat.DataFormatNames;
 import org.opensearch.index.engine.dataformat.FieldTypeCapabilities;
 import org.opensearch.index.engine.exec.Indexer;
 import org.opensearch.index.engine.exec.coord.CatalogSnapshot;
@@ -486,9 +487,9 @@ public class EngineBackedIndexer implements Indexer {
      * engine that is a {@link SegmentInfosCatalogSnapshot} over the reader-visible segments.
      *
      * <p>This is the non-composite counterpart of
-     * {@link DataFormatAwareEngine#acquireReader()}: there is exactly one data format ({@code
-     * lucene}) and no per-format {@code EngineReaderManager}, so the format→reader map is a single
-     * entry pointing at the shard's {@code DirectoryReader}.
+     * {@link DataFormatAwareEngine#acquireReader()}: there is exactly one data format ({@link
+     * DataFormatNames#LUCENE_DOC_VALUES}) and no per-format {@code EngineReaderManager}, so the
+     * format→reader map is a single entry pointing at the shard's {@code DirectoryReader}.
      *
      * @return a gated closeable that releases both the searcher and the snapshot reference
      */
@@ -508,14 +509,23 @@ public class EngineBackedIndexer implements Indexer {
     }
 
     /**
-     * Format key for a plain shard's Lucene index. {@link DataFormat} equality is defined solely on
-     * {@link DataFormat#name()}, so this instance is interchangeable as a map key with the descriptor
-     * the Lucene search back-end plugin registers — no compile-time dependency on that plugin.
+     * Format key for a plain shard's Lucene doc values. {@link DataFormat} equality is defined solely
+     * on {@link DataFormat#name()}, so this instance is interchangeable as a map key with any
+     * same-named descriptor — no compile-time dependency on the back-end plugin.
+     *
+     * <p>The name is {@link DataFormatNames#LUCENE_DOC_VALUES}, not {@link DataFormatNames#LUCENE}:
+     * publishing under a distinct id is what lets a consumer tell a plain shard's reader (real doc
+     * values, indexed numerics) from a composite index's Lucene secondary (postings only) by
+     * <em>format id alone</em>, without inspecting the value's type. This format is intentionally not
+     * registered in the {@link org.opensearch.index.engine.dataformat.DataFormatRegistry} — it is a
+     * lookup key for an existing Lucene index, not a writable format ({@code
+     * DataFormatPlugin.indexingEngine()} is mandatory and the catalog/writer contracts are
+     * file-based).
      */
-    private static final DataFormat LUCENE_FORMAT = new DataFormat() {
+    private static final DataFormat LUCENE_DOC_VALUES_FORMAT = new DataFormat() {
         @Override
         public String name() {
-            return "lucene";
+            return DataFormatNames.LUCENE_DOC_VALUES;
         }
 
         @Override
@@ -531,12 +541,13 @@ public class EngineBackedIndexer implements Indexer {
 
     /**
      * A point-in-time {@link Reader} over a plain, Lucene-backed shard. Exposes the shard's
-     * {@link DirectoryReader} under the {@code lucene} data format and the engine's
-     * {@link CatalogSnapshot}. Closing releases the searcher and the snapshot reference.
+     * {@link DirectoryReader} under the {@link DataFormatNames#LUCENE_DOC_VALUES} data format and the
+     * engine's {@link CatalogSnapshot}. Closing releases the searcher and the snapshot reference.
      *
      * <p>Unlike {@code DataFormatAwareEngine.DataFormatAwareReader}, whose map values are
      * plugin-supplied wrapper types, the value here is the bare Lucene {@link DirectoryReader}.
-     * Consumers wanting a richer per-format wrapper adapt it themselves from {@link #reader}.
+     * Consumers wanting a richer per-format wrapper adapt it themselves from {@link #reader}, keyed
+     * on the format id.
      *
      * @opensearch.experimental
      */
@@ -556,10 +567,13 @@ public class EngineBackedIndexer implements Indexer {
             return snapshotRef.get();
         }
 
-        /** The shard's {@link DirectoryReader} for the {@code lucene} format, {@code null} otherwise. */
+        /**
+         * The shard's {@link DirectoryReader} for the {@link DataFormatNames#LUCENE_DOC_VALUES}
+         * format, {@code null} otherwise.
+         */
         @Override
         public Object reader(DataFormat format) {
-            return LUCENE_FORMAT.equals(format) ? searcher.getDirectoryReader() : null;
+            return LUCENE_DOC_VALUES_FORMAT.equals(format) ? searcher.getDirectoryReader() : null;
         }
 
         @Override
@@ -570,12 +584,7 @@ public class EngineBackedIndexer implements Indexer {
             }
             if (readerType.isInstance(reader) == false) {
                 throw new IllegalArgumentException(
-                    "Reader for format ["
-                        + format.name()
-                        + "] is "
-                        + reader.getClass().getName()
-                        + ", expected "
-                        + readerType.getName()
+                    "Reader for format [" + format.name() + "] is " + reader.getClass().getName() + ", expected " + readerType.getName()
                 );
             }
             return readerType.cast(reader);
