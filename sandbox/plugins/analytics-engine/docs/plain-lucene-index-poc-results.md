@@ -81,77 +81,112 @@ The index is plain — `index.pluggable.dataformat.enabled: false` and no
 
 ## Results
 
-### What runs, and where
+Every block below is a verbatim transcript against the cluster described above. `rows_processed` on
+a `SHARD_FRAGMENT` is what that stage emitted across all shards — i.e. what crossed the network.
+Row lists are truncated to six entries where noted; `row_count` is the full count.
 
-`rows out` is `rows_processed` on the shard fragment: what crosses the network.
+### sort + head — shard-local TopK
 
-| PPL | shard backend | rows out | result |
-| --- | --- | --- | --- |
-| `fields user` | lucene | 3000 | 3000 rows |
-| `fields user, latency` | lucene | 3000 | 3000 rows |
-| `where user = 'user3'` | lucene | 150 | 150 rows |
-| `where latency > 500` | datafusion | 1497 | 1497 rows |
-| `sort - latency \| head 10` | **datafusion** | **30** | 10 rows |
-| `stats count() as c by user` | **datafusion** | **60** | 20 rows |
-| `stats count() as c by user \| sort - c \| head 5` | **datafusion** | **60** | 5 rows |
-| `where … \| eventstats count() by user \| sort - c \| head 10` | lucene | 2400 | 10 rows |
-| `join users \| stats count() by team` | lucene | 3000 | 4 rows |
+```console
+$ curl -s -X POST "localhost:9200/_analytics/ppl" -H 'Content-Type: application/json' \
+    -d '{"query": "source=logs | sort - latency | head 10 | fields latency"}'
+{"columns": ["latency"], "row_count": 10, "rows": [[999], [999], [999], [998], [998], [998], "..."]}
 
-The two rows that matter most are `sort … | head` and `stats … by`: **30 and 60 rows leave the
-shards instead of 3000**, because DataFusion now runs a shard-local `SortExec: TopK(fetch=10)` and
-`AggregateExec: mode=Partial` directly over Lucene doc values. Neither shape could be planned at all
-before.
-
-### Rank-limited window pushdown
-
-`642e17d` pushes a rank-like window and its rank bound below the exchange.
-
-| PPL | rows out before | rows out after | result |
-| --- | --- | --- | --- |
-| `dedup user` (plain) | 3000 | **60** | 20 rows |
-| `dedup 2 user` (plain) | 3000 | **120** | 40 rows |
-| `dedup user` (composite) | 3000 | **60** | 20 rows |
-| `eventstats count() by user \| sort - c \| head 5` | 3000 | 3000 (unchanged) | 5 rows |
-
-60 = 20 partitions × 3 shards, each shard emitting at most one row per partition — a 50× reduction.
-Results are identical to the pre-change plan in every case.
-
-Request and response:
-
-```bash
-curl -s -X POST "localhost:9200/_analytics/ppl" \
-  -H 'Content-Type: application/json' \
-  -d '{"query": "source=logs | dedup user | fields user"}'
+$ curl -s -X POST "localhost:9200/_analytics/ppl/_explain" -H 'Content-Type: application/json' \
+    -d '{"query": "source=logs | sort - latency | head 10 | fields latency"}' | jq '.profile.stages[] | {stage_id, execution_type, chosen_backend, rows_processed}'
+{"stage_id": 0, "execution_type": "SHARD_FRAGMENT", "chosen_backend": "datafusion", "rows_processed": 30, "tasks_completed": 3}
+{"stage_id": 1, "execution_type": "COORDINATOR_REDUCE", "chosen_backend": "datafusion", "rows_processed": 0, "tasks_completed": 1}
 ```
 
-```json
-{"columns": ["user"],
- "rows": [["user0"],["user1"],["user14"],["user19"],["user9"],["user11"],["user16"],
-          ["user18"],["user2"],["user3"],["user8"],["user13"],["user15"],["user4"],
-          ["user5"],["user10"],["user12"],["user17"],["user6"],["user7"]]}
+### stats by key — shard-local partial aggregate
+
+```console
+$ curl -s -X POST "localhost:9200/_analytics/ppl" -H 'Content-Type: application/json' \
+    -d '{"query": "source=logs | stats count() as c by user"}'
+{"columns": ["c", "user"], "row_count": 20, "rows": [[150, "user18"], [150, "user11"], [150, "user16"], [150, "user3"], [150, "user2"], [150, "user8"], "..."]}
+
+$ curl -s -X POST "localhost:9200/_analytics/ppl/_explain" -H 'Content-Type: application/json' \
+    -d '{"query": "source=logs | stats count() as c by user"}' | jq '.profile.stages[] | {stage_id, execution_type, chosen_backend, rows_processed}'
+{"stage_id": 0, "execution_type": "SHARD_FRAGMENT", "chosen_backend": "datafusion", "rows_processed": 60, "tasks_completed": 3}
+{"stage_id": 1, "execution_type": "COORDINATOR_REDUCE", "chosen_backend": "datafusion", "rows_processed": 0, "tasks_completed": 1}
 ```
 
-The plan carries the window twice — the pushed copy is the `_local_rank_` one below the exchange:
+### top-N groups — partial aggregate + coordinator TopK
 
+```console
+$ curl -s -X POST "localhost:9200/_analytics/ppl" -H 'Content-Type: application/json' \
+    -d '{"query": "source=logs | stats count() as c by user | sort - c | head 5"}'
+{"columns": ["c", "user"], "row_count": 5, "rows": [[150, "user10"], [150, "user5"], [150, "user12"], [150, "user15"], [150, "user17"]]}
+
+$ curl -s -X POST "localhost:9200/_analytics/ppl/_explain" -H 'Content-Type: application/json' \
+    -d '{"query": "source=logs | stats count() as c by user | sort - c | head 5"}' | jq '.profile.stages[] | {stage_id, execution_type, chosen_backend, rows_processed}'
+{"stage_id": 0, "execution_type": "SHARD_FRAGMENT", "chosen_backend": "datafusion", "rows_processed": 60, "tasks_completed": 3}
+{"stage_id": 1, "execution_type": "COORDINATOR_REDUCE", "chosen_backend": "datafusion", "rows_processed": 0, "tasks_completed": 1}
 ```
-OpenSearchProject(user=[$0])
-  OpenSearchFilter(ANNOTATED_PREDICATE(id=1, <=($1, 1)))                       <- coordinator authority
-    OpenSearchProject(user=[$2], _row_number_dedup_=[ROW_NUMBER() OVER (PARTITION BY $2)])
-      OpenSearchExchangeReducer(SINGLETON)
-        OpenSearchProject(latency, severityText, user)                          <- drops local rank
-          OpenSearchFilter(<=($3, 1))                                           <- pushed rank bound
-            OpenSearchProject(..., _local_rank_=[ROW_NUMBER() OVER (PARTITION BY $2)])  <- pushed window
-              OpenSearchFilter(IS NOT NULL($2))
-                OpenSearchTableScan(logs, viableBackends=[[lucene, datafusion]])
+
+### dedup — rank-limited window pushed below the exchange
+
+```console
+$ curl -s -X POST "localhost:9200/_analytics/ppl" -H 'Content-Type: application/json' \
+    -d '{"query": "source=logs | dedup user | fields user"}'
+{"columns": ["user"], "row_count": 20, "rows": [["user13"], ["user15"], ["user4"], ["user5"], ["user10"], ["user12"], "..."]}
+
+$ curl -s -X POST "localhost:9200/_analytics/ppl/_explain" -H 'Content-Type: application/json' \
+    -d '{"query": "source=logs | dedup user | fields user"}' | jq '.profile.stages[] | {stage_id, execution_type, chosen_backend, rows_processed}'
+{"stage_id": 0, "execution_type": "SHARD_FRAGMENT", "chosen_backend": "datafusion", "rows_processed": 60, "tasks_completed": 3}
+{"stage_id": 1, "execution_type": "COORDINATOR_REDUCE", "chosen_backend": "datafusion", "rows_processed": 0, "tasks_completed": 1}
 ```
 
-Shard fragment — 60 rows out of 3000, window evaluated locally over a Lucene-fed leaf:
+### dedup 2 — same rule, N=2
 
+```console
+$ curl -s -X POST "localhost:9200/_analytics/ppl" -H 'Content-Type: application/json' \
+    -d '{"query": "source=logs | dedup 2 user | fields user"}'
+{"columns": ["user"], "row_count": 40, "rows": [["user11"], ["user11"], ["user16"], ["user16"], ["user18"], ["user18"], "..."]}
+
+$ curl -s -X POST "localhost:9200/_analytics/ppl/_explain" -H 'Content-Type: application/json' \
+    -d '{"query": "source=logs | dedup 2 user | fields user"}' | jq '.profile.stages[] | {stage_id, execution_type, chosen_backend, rows_processed}'
+{"stage_id": 0, "execution_type": "SHARD_FRAGMENT", "chosen_backend": "datafusion", "rows_processed": 120, "tasks_completed": 3}
+{"stage_id": 1, "execution_type": "COORDINATOR_REDUCE", "chosen_backend": "datafusion", "rows_processed": 0, "tasks_completed": 1}
 ```
-stage 0  SHARD_FRAGMENT  backend=datafusion  rows_processed=60  tasks=3
 
-FilterExec: row_number() PARTITION BY [logs.user] … @3 <= 1, projection=[latency@0, severityText@1, user@2]
-  BoundedWindowAggExec: wdw=[row_number() PARTITION BY [logs.user] …], mode=[Sorted]
+### eventstats + sort + head — additive measure, deliberately NOT pushed
+
+```console
+$ curl -s -X POST "localhost:9200/_analytics/ppl" -H 'Content-Type: application/json' \
+    -d '{"query": "source=logs | eventstats count() as c by user | sort - c | head 5 | fields user, c"}'
+{"columns": ["user", "c"], "row_count": 5, "rows": [["user10", 150], ["user11", 150], ["user10", 150], ["user11", 150], ["user10", 150]]}
+
+$ curl -s -X POST "localhost:9200/_analytics/ppl/_explain" -H 'Content-Type: application/json' \
+    -d '{"query": "source=logs | eventstats count() as c by user | sort - c | head 5 | fields user, c"}' | jq '.profile.stages[] | {stage_id, execution_type, chosen_backend, rows_processed}'
+{"stage_id": 0, "execution_type": "SHARD_FRAGMENT", "chosen_backend": "lucene", "rows_processed": 3000, "tasks_completed": 3}
+{"stage_id": 1, "execution_type": "COORDINATOR_REDUCE", "chosen_backend": "datafusion", "rows_processed": 0, "tasks_completed": 1}
+```
+
+### Full plan for the pushed window
+
+The plan carries the window twice. The `_local_rank_` copy below the `OpenSearchExchangeReducer` is
+the pushed one; the coordinator keeps its own copy and remains the authority.
+
+```console
+$ curl -s -X POST "localhost:9200/_analytics/ppl/_explain" -H 'Content-Type: application/json' \
+    -d '{"query": "source=logs | dedup user | fields user"}' | jq -r '.profile.full_plan[]'
+OpenSearchProject(user=[$0], viableBackends=[[datafusion]])
+  OpenSearchFilter(condition=[ANNOTATED_PREDICATE(id=1, backends=[datafusion], <=($1, 1))], viableBackends=[[datafusion]])
+    OpenSearchProject(user=[$2], _row_number_dedup_=[ROW_NUMBER() OVER (PARTITION BY $2)], viableBackends=[[datafusion]])
+      OpenSearchExchangeReducer(viableBackends=[[datafusion]], exchange=[ExchangeInfo[distributionType=SINGLETON, partitionKeyIndices=[], partitionCount=0]])
+        OpenSearchProject(latency=[$0], severityText=[$1], user=[$2], viableBackends=[[datafusion]])
+          OpenSearchFilter(condition=[<=($3, 1)], viableBackends=[[datafusion]])
+            OpenSearchProject(latency=[$0], severityText=[$1], user=[$2], _local_rank_=[ROW_NUMBER() OVER (PARTITION BY $2)], viableBackends=[[datafusion]])
+              OpenSearchFilter(condition=[ANNOTATED_PREDICATE(id=0, backends=[datafusion], IS NOT NULL($2))], viableBackends=[[datafusion]])
+                OpenSearchTableScan(table=[[logs]], viableBackends=[[lucene, datafusion]])
+
+$ ... | jq '.profile.stages[0] | {stage_id, execution_type, chosen_backend, rows_processed}'
+{"stage_id": 0, "execution_type": "SHARD_FRAGMENT", "chosen_backend": "datafusion", "rows_processed": 60}
+
+$ ... | jq -r '.profile.stages[0].tasks[0].physical_plan'
+FilterExec: row_number() PARTITION BY [logs.user] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@3 <= 1, projection=[latency@0, severityText@1, user@2]
+  BoundedWindowAggExec: wdw=[row_number() PARTITION BY [logs.user] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW: Field { "row_number() PARTITION BY [logs.user] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW": UInt64 }, frame: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], mode=[Sorted]
     SortExec: expr=[user@2 ASC NULLS LAST], preserve_partitioning=[true]
       RepartitionExec: partitioning=Hash([user@2], 4), input_partitions=4
         FilterExec: user@2 IS NOT NULL
@@ -159,63 +194,56 @@ FilterExec: row_number() PARTITION BY [logs.user] … @3 <= 1, projection=[laten
             StreamingTableExec: partition_sizes=1, projection=[latency, severityText, user]
 ```
 
-Coordinator re-runs the window as the final authority:
+`RepartitionExec: partitioning=Hash([user@2], 4)` is DataFusion parallelising the local window across
+four threads per shard, and `StreamingTableExec` is the Lucene doc-value producer feeding it — so this
+one plan shows both the window pushdown and the Lucene-to-DataFusion leaf working together.
 
+### where + join + stats — Lucene filters one side, scans the other, DataFusion joins and aggregates
+
+```console
+$ curl -s -X POST "localhost:9200/_analytics/ppl" -H 'Content-Type: application/json' \
+    -d "{\"query\": \"source=logs | where severityText='ERROR' | join left=L right=U on L.user = U.user users | stats count() as c by U.team\"}"
+{"columns": ["c", "U.team"], "rows": [[600, "team2"], [600, "team3"], [600, "team0"], [600, "team1"]]}
+
+$ ... /_explain | jq '.profile.stages[] | {stage_id, execution_type, chosen_backend, rows_processed}'
+{"stage_id": 0, "execution_type": "SHARD_FRAGMENT", "chosen_backend": "lucene", "rows_processed": 2400, "tasks_completed": 3}
+{"stage_id": 1, "execution_type": "SHARD_FRAGMENT", "chosen_backend": "lucene", "rows_processed": 20, "tasks_completed": 3}
+{"stage_id": 2, "execution_type": "COORDINATOR_REDUCE", "chosen_backend": "datafusion", "rows_processed": 0, "tasks_completed": 1}
 ```
-stage 1  COORDINATOR_REDUCE  backend=datafusion  tasks=1
 
-FilterExec: row_number() PARTITION BY [input-0.user] … @1 <= 1, projection=[user@0]
-  BoundedWindowAggExec: wdw=[row_number() PARTITION BY [input-0.user] …], mode=[Sorted]
-```
+Verifiable by arithmetic: 16 ERROR users x 150 docs = 2400 joined rows; 4 ERROR users per team x 150
+= 600 each. Lucene applies the `where` on the `logs` side (2400 of 3000 rows leave the shards) and
+does an unfiltered doc-value scan on the `users` side; DataFusion owns the join and the aggregation.
 
-**Soundness.** For a rank-like function the local rank of a row never exceeds its global rank:
-adding other shards' rows to a partition can only push a row further down. So every row satisfying
-`global_rank <= N` also satisfies `local_rank <= N`, and the shard filter discards only rows the
-coordinator would discard anyway. The same rule appears in Spark (`InsertWindowGroupLimit`, for
-`RowNumber`/`Rank`/`DenseRank` under a rank predicate) and Flink (batch `Rank` planned as local rank
-before the exchange, global rank after).
+### Summary
+
+| PPL | shard backend | rows out | result | before this branch |
+| --- | --- | --- | --- | --- |
+| `sort - latency \| head 10` | datafusion | **30** | 10 rows | planning failure |
+| `stats count() as c by user` | datafusion | **60** | 20 rows | planning failure |
+| `stats count() as c by user \| sort - c \| head 5` | datafusion | **60** | 5 rows | planning failure |
+| `dedup user` | datafusion | **60** | 20 rows | 3000 |
+| `dedup 2 user` | datafusion | **120** | 40 rows | 3000 |
+| `eventstats count() by user \| sort - c \| head 5` | lucene | 3000 | 5 rows | 3000 (unchanged by design) |
+| `where … \| join users \| stats count() by team` | lucene | 2400 + 20 | 4 rows | planning failure |
+
+30, 60 and 120 are the headline numbers: `30` = 3 shards x TopK(10); `60` = 20 partitions x 3 shards;
+`120` is the same with N=2. Where the table says *planning failure*, the query could not be planned at
+all on a plain index before this branch.
+
+**Soundness of the window pushdown.** For a rank-like function the local rank of a row never exceeds
+its global rank: adding other shards' rows to a partition can only push a row further down. So every
+row satisfying `global_rank <= N` also satisfies `local_rank <= N`, and the shard filter discards only
+rows the coordinator would discard anyway. The same rule appears in Spark
+(`InsertWindowGroupLimit`, for `RowNumber`/`Rank`/`DenseRank` under a rank predicate) and Flink (batch
+`Rank` planned as a local rank before the exchange and a global rank after).
 
 **Why `eventstats` is excluded.** Its predicate is a row-level Top-N over an *additive* measure. A
 shard's partial `COUNT` is not the global count, so a locally-failing row may pass globally —
-filtering locally would change the answer. Spark draws the same line. Note also that `eventstats`
-and `stats` are not interchangeable: `stats count() by user | sort - c | head 5` returns **5 distinct
-users**, while `eventstats count() by user | sort - c | head 5` returns **5 rows of the same user**,
-because `eventstats` annotates every row and the Top-N is over rows.
-
-### Hybrid split: `where` + `join` + `stats`
-
-```bash
-curl -s -X POST "localhost:9200/_analytics/ppl" -H 'Content-Type: application/json' -d '{
-  "query": "source=logs | where severityText='"'"'ERROR'"'"' | join left=L right=U on L.user = U.user users | stats count() as c by U.team"}'
-```
-
-```json
-{"columns": ["c", "U.team"],
- "rows": [[600, "team1"], [600, "team0"], [600, "team3"], [600, "team2"]]}
-```
-
-Verifiable by arithmetic: 16 ERROR users × 150 docs = 2400 joined rows; 4 ERROR users per team × 150
-= 600 each.
-
-```
-stage 0  SHARD_FRAGMENT      backend=lucene      rows_processed=2400  tasks=3
-           Project(severityText, user) <- Filter(severityText='ERROR') <- TableScan(logs)
-
-stage 1  SHARD_FRAGMENT      backend=lucene      rows_processed=20    tasks=3
-           TableScan(users)
-
-stage 2  COORDINATOR_REDUCE  backend=datafusion  tasks=1
-           ProjectionExec
-             AggregateExec: mode=FinalPartitioned, gby=[team@0]
-               RepartitionExec: partitioning=Hash([team@0], 4)
-                 AggregateExec: mode=Partial, gby=[team@0]
-                   HashJoinExec: mode=CollectLeft, join_type=Inner, on=[(user@1, user@0)]
-```
-
-Lucene applies the `where` on the `logs` side (2400 of 3000 rows leave the shards) and does an
-unfiltered doc-value scan on the `users` side; DataFusion owns the join and the aggregation. This is
-the intended division of labour: Lucene as the storage-and-postings layer, DataFusion as the query
-engine.
+filtering locally would change the answer. Spark draws the same line. Note also that `eventstats` and
+`stats` are not interchangeable, which the transcripts above show directly: `stats count() by user |
+sort - c | head 5` returns **5 distinct users**, while `eventstats count() by user | sort - c | head
+5` returns **5 rows** (all 150-count rows, ordered arbitrarily among ties).
 
 ## Limits
 
