@@ -313,6 +313,30 @@ public class CapabilityRegistry {
         return allBackends(filterIndex.getOrDefault(new ScalarKey(function, fieldType), Map.of()));
     }
 
+    /**
+     * Backends that can evaluate expressions over a stream they did not read from storage — i.e. those
+     * that can execute a coordinator-side stage, identified (as elsewhere in the planner) by providing
+     * an {@link org.opensearch.analytics.spi.ExchangeSinkProvider}.
+     *
+     * <p>Used to keep storage-scan-only backends out of the derived-column filter path. A derived column
+     * (aggregate result, expression output) exists only in the producer's in-memory batch; there is no
+     * field to look up in a term dictionary or doc-value column, so a backend whose only ability is to
+     * read its own storage cannot evaluate a predicate on it. Because
+     * {@link #filterBackendsAnyFormat} deliberately ignores formats, without this filter a
+     * storage-scoped capability (e.g. Lucene's plain-index numeric filters, declared only for the
+     * {@code lucene_doc_values} format) would leak into that path and the predicate would be delegated
+     * to a backend that then fails compiling it against a non-existent field.
+     */
+    public Set<String> executionCapableBackends() {
+        Set<String> result = new HashSet<>();
+        for (AnalyticsSearchBackendPlugin backend : backends) {
+            if (backend.getExchangeSinkProvider() != null) {
+                result.add(backend.name());
+            }
+        }
+        return result;
+    }
+
     public List<String> scalarBackendsAnyFormat(ScalarFunction function, FieldType fieldType) {
         return allBackends(scalarIndex.getOrDefault(new ScalarKey(function, fieldType), Map.of()));
     }

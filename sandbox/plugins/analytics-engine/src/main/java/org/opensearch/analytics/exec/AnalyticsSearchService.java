@@ -44,6 +44,7 @@ import org.opensearch.analytics.spi.ShardScanInstructionNode;
 import org.opensearch.analytics.spi.ShuffleBufferRegistry;
 import org.opensearch.analytics.spi.ShuffleProducerOutputState;
 import org.opensearch.analytics.spi.ShuffleSender;
+import org.opensearch.analytics.spi.ValueScanProducer;
 import org.opensearch.arrow.allocator.ArrowNativeAllocator;
 import org.opensearch.arrow.spi.NativeAllocatorPoolConfig;
 import org.opensearch.common.concurrent.GatedCloseable;
@@ -1068,7 +1069,27 @@ public class AnalyticsSearchService implements AutoCloseable {
         ctx.setQueryCache(shard.getQueryCache());
         ctx.setQueryCachingPolicy(shard.getQueryCachingPolicy());
         ctx.setShardId(shard.shardId());
+        ctx.setValueScanProducer(resolveValueScanProducer(reader));
         return ctx;
+    }
+
+    /**
+     * Offers {@code reader} to every registered back-end's {@link ValueScanProducer} and returns the
+     * first that accepts it, or {@code null} when none can. Resolution is per shard and driven by what
+     * the reader publishes, so a back-end whose own storage reader is absent on this shard can still
+     * obtain its rows from whichever back-end can read them.
+     */
+    private ValueScanProducer resolveValueScanProducer(Reader reader) {
+        if (reader == null) {
+            return null;
+        }
+        for (AnalyticsSearchBackendPlugin backend : backends.values()) {
+            ValueScanProducer producer = backend.getValueScanProducer();
+            if (producer != null && producer.supports(reader)) {
+                return producer;
+            }
+        }
+        return null;
     }
 
     // ── Assertion helpers (invoked only when -ea is enabled; bodies are dead in production) ──

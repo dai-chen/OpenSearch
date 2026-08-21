@@ -99,6 +99,21 @@ testClusters {
           jvmArgs '--add-opens=java.base/java.nio=ALL-UNNAMED'
           jvmArgs '--enable-native-access=ALL-UNNAMED'
         }
+        if (p.equals("analytics-engine")) {
+          // Mirrors sandbox/qa/analytics-engine-rest/build.gradle's configureAnalyticsCluster so a
+          // manually-launched cluster behaves like the one the QA integTests run against.
+          // Fragment dispatch is streaming-only — without this the analytics engine fails to wire
+          // StreamTransportService at node start.
+          systemProperty 'opensearch.experimental.feature.transport.stream.enabled', 'true'
+          // Cluster-level opt-in read by the opensearch-sql plugin's RestUnifiedQueryAction to route
+          // PPL/SQL through the analytics engine. It does NOT make indices composite: core stamps
+          // index.pluggable.dataformat from this value but leaves index.pluggable.dataformat.enabled
+          // at its false default, so an ordinary index stays a plain Lucene index.
+          setting 'cluster.pluggable.dataformat', 'composite'
+          // Calcite's Aggregate.typeMatchesInferred assertion doesn't hold for distributed FINAL
+          // aggregates; the substrait emit is the source of truth.
+          jvmArgs '-da:org.apache.calcite...'
+        }
       }
     }
   }

@@ -82,6 +82,17 @@ public class LucenePlugin extends Plugin
     public static final LuceneDataFormat DATA_FORMAT = new LuceneDataFormat();
     private final LuceneDocumentResolver documentResolver = new LuceneDocumentResolver();
 
+    /**
+     * The node's single {@link LuceneReaderAdapter}. Held here rather than in a static so its
+     * per-reader memo is owned by a component with a lifecycle; see that class's javadoc.
+     */
+    private final LuceneReaderAdapter readerAdapter = new LuceneReaderAdapter();
+
+    /** The node's {@link LuceneReaderAdapter} — resolves a shard's {@link LuceneReader} by format id. */
+    LuceneReaderAdapter readerAdapter() {
+        return readerAdapter;
+    }
+
     /** Creates a new LucenePlugin. */
     public LucenePlugin() {}
 

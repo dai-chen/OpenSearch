@@ -34,15 +34,22 @@ final class LuceneSearcherState implements BackendExecutionContext {
     private final IndexSearcher searcher;
     /** Never {@code null}; {@code MatchAllDocsQuery} when the fragment had no filter. */
     private final Query filterQuery;
-    /** Aggregate-call output names — one Int64 column per name in the result Arrow batch. */
+    /**
+     * For {@link LuceneFragmentKind#COUNT}, aggregate-call output names — one Int64 column per name.
+     * For {@link LuceneFragmentKind#VALUE_SCAN}, the mapped field names to read doc values for, in
+     * output row order.
+     */
     private final List<String> outputColumnNames;
+    /** What the data node must produce for this fragment. */
+    private final LuceneFragmentKind kind;
 
-    LuceneSearcherState(IndexSearcher searcher, Query filterQuery, List<String> outputColumnNames) {
+    LuceneSearcherState(IndexSearcher searcher, Query filterQuery, List<String> outputColumnNames, LuceneFragmentKind kind) {
         this.searcher = Objects.requireNonNull(searcher, "searcher");
         // Never null — see field javadoc. Caller must substitute MatchAllDocsQuery when the
         // fragment has no filter so the search engine doesn't have to branch.
         this.filterQuery = Objects.requireNonNull(filterQuery, "filterQuery (use MatchAllDocsQuery for no-filter fragments)");
         this.outputColumnNames = List.copyOf(Objects.requireNonNull(outputColumnNames, "outputColumnNames"));
+        this.kind = Objects.requireNonNull(kind, "kind");
     }
 
     IndexSearcher searcher() {
@@ -55,5 +62,9 @@ final class LuceneSearcherState implements BackendExecutionContext {
 
     List<String> outputColumnNames() {
         return outputColumnNames;
+    }
+
+    LuceneFragmentKind kind() {
+        return kind;
     }
 }

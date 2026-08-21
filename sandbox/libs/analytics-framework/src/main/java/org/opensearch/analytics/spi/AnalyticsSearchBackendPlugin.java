@@ -82,6 +82,18 @@ public interface AnalyticsSearchBackendPlugin {
     }
 
     /**
+     * Returns this back-end's {@link ValueScanProducer}, or {@code null} when it cannot act as a scan
+     * source for another back-end. Defaults to {@code null} — being a value source is opt-in.
+     *
+     * <p>The analytics layer offers each shard's reader to every registered producer and threads the
+     * accepting one onto the {@link org.opensearch.analytics.backend.ShardScanExecutionContext}, so a
+     * consuming back-end reaches it through the context and never depends on the producing plugin.
+     */
+    default ValueScanProducer getValueScanProducer() {
+        return null;
+    }
+
+    /**
      * Returns the instruction handler factory for this backend. Used at the coordinator
      * to create instruction nodes (backend attaches custom config) and at the data node
      * to create handlers that apply instructions to the execution context.

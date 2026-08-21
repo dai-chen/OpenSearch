@@ -118,13 +118,19 @@ public class OpenSearchProject extends Project implements OpenSearchRelNode, Dis
     }
 
     /**
-     * Projects containing {@code RexOver} (window functions) need fully-gathered input so the
-     * window's global frame semantics are correct. Projects flagged {@link #pinAboveExchange} must
-     * likewise stay in the coordinator fragment (they carry an aggregate's literal config arg). Both
-     * return infinite cost unless input is SINGLETON/ANY — Volcano then picks the plan where an ER
-     * sits under this project.
+     * Projects containing {@code RexOver} (window functions) constrain where they may run. A window
+     * <em>partitioned</em> by one or more columns is satisfiable by input hash-partitioned on (a subset of)
+     * those columns — every row of a given partition then lands on one worker, which is all the window
+     * frame needs. An unpartitioned window ({@code OVER ()}) has a single global frame and genuinely needs
+     * fully-gathered input. Projects flagged {@link #pinAboveExchange} must likewise stay in the coordinator
+     * fragment (they carry an aggregate's literal config arg).
      *
-     * <p>Plain projects (neither) have no ordering requirement — tiny cost unconditionally.
+     * <p>So: tiny cost when the input is SINGLETON/ANY, or when it is HASH_DISTRIBUTED on keys contained in
+     * the window's PARTITION BY set; infinite otherwise, which makes Volcano place an exchange below. This
+     * mirrors {@code IgniteWindow.satisfiesDistribution} and the {@code hash(partitionKeys)}-else-SINGLETON
+     * requirement in Drill's {@code WindowPrule} and Flink's {@code BatchPhysicalOverAggregateRule}.
+     *
+     * <p>Plain projects (neither window nor pinned) have no ordering requirement — tiny cost unconditionally.
      */
     @Override
     public RelOptCost computeSelfCost(RelOptPlanner planner, RelMetadataQuery mq) {
@@ -132,26 +138,99 @@ public class OpenSearchProject extends Project implements OpenSearchRelNode, Dis
             return planner.getCostFactory().makeTinyCost();
         }
         // containsOver() is Calcite's own — inherited from Project.
+        List<Integer> partitionKeys = pinAboveExchange ? List.of() : windowPartitionKeys();
         for (int i = 0; i < getInput().getTraitSet().size(); i++) {
             RelTrait trait = getInput().getTraitSet().getTrait(i);
             if (trait instanceof OpenSearchDistribution distribution) {
-                boolean singletonOrAny = distribution.getType() == RelDistribution.Type.SINGLETON
-                    || distribution.getType() == RelDistribution.Type.ANY;
-                if (!singletonOrAny) {
-                    return planner.getCostFactory().makeInfiniteCost();
+                if (distribution.getType() == RelDistribution.Type.SINGLETON || distribution.getType() == RelDistribution.Type.ANY) {
+                    continue;
                 }
+                if (satisfiedByHash(distribution, partitionKeys)) {
+                    continue;
+                }
+                return planner.getCostFactory().makeInfiniteCost();
             }
         }
         return planner.getCostFactory().makeTinyCost();
+    }
+
+    /**
+     * Whether a HASH_DISTRIBUTED input satisfies a window partitioned by {@code partitionKeys}: the hash
+     * keys must be a subset of the partition keys. Hashing on a subset is safe — it is a coarser
+     * partitioning, so all rows sharing a PARTITION BY tuple still co-locate. Hashing on a superset is
+     * not: two rows with the same PARTITION BY tuple could differ in the extra key and split across
+     * workers, which would compute the window over a fragment of its frame.
+     */
+    private static boolean satisfiedByHash(OpenSearchDistribution distribution, List<Integer> partitionKeys) {
+        return distribution.getType() == RelDistribution.Type.HASH_DISTRIBUTED
+            && partitionKeys.isEmpty() == false
+            && partitionKeys.containsAll(distribution.getKeys());
+    }
+
+    /**
+     * Input-column indices this project's window functions all partition by, or empty when the window
+     * cannot be distributed on a key.
+     *
+     * <p>Empty is returned — meaning "this window needs SINGLETON" — when there is no window at all, when
+     * any window is unpartitioned ({@code OVER ()}, a single global frame), when a partition key is not a
+     * plain column reference, or when several windows in the same project disagree on their partition keys.
+     * The last case is a deliberate simplification: one input distribution cannot satisfy two different
+     * partitionings, and Calcite emits one {@code Project} per {@code Window.Group} only after physical
+     * translation, so here we keep the conservative answer rather than split the project.
+     */
+    private List<Integer> windowPartitionKeys() {
+        List<LinkedHashSet<Integer>> perWindow = new ArrayList<>();
+        RexShuttle collector = new RexShuttle() {
+            @Override
+            public RexNode visitOver(RexOver over) {
+                LinkedHashSet<Integer> keys = new LinkedHashSet<>();
+                for (RexNode key : over.getWindow().partitionKeys) {
+                    if (key instanceof RexInputRef ref) {
+                        keys.add(ref.getIndex());
+                    } else {
+                        // Non-trivial partition expression — cannot map it to an input column to hash on.
+                        keys.clear();
+                        break;
+                    }
+                }
+                perWindow.add(keys);
+                return super.visitOver(over);
+            }
+        };
+        for (RexNode expr : getProjects()) {
+            expr.accept(collector);
+        }
+        if (perWindow.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<Integer> first = perWindow.getFirst();
+        if (first.isEmpty()) {
+            return List.of();
+        }
+        for (LinkedHashSet<Integer> keys : perWindow) {
+            if (!keys.equals(first)) {
+                return List.of();
+            }
+        }
+        return List.copyOf(first);
     }
 
     // ---- DistributionAware (Option B post-CBO enforcement pass) ----
 
     /**
      * A row-wise project imposes no partitioning requirement on its input (it neither needs nor breaks a
-     * distribution) — returns {@code null} so the input keeps whatever distribution it derived. A
-     * window-bearing project ({@code RexOver}) or a {@code pinAboveExchange} project needs fully-gathered
-     * input (global window frame / coordinator-pinned literal), so it requires {@code COORDINATOR+SINGLETON}.
+     * distribution) — returns {@code null} so the input keeps whatever distribution it derived.
+     *
+     * <p>A window-bearing project demands the partitioning its window frames need: {@code WORKER+HASH} on the
+     * PARTITION BY keys when it has them, so the window runs distributed with each partition whole on one
+     * worker; {@code COORDINATOR+SINGLETON} for an unpartitioned {@code OVER ()}, whose frame spans every row.
+     * This is the same three-way choice Drill's {@code WindowPrule} and Flink's
+     * {@code BatchPhysicalOverAggregateRule} make, and it mirrors the existing
+     * {@link OpenSearchAggregate#requiredInputDistribution} which demands {@code hash(groupSet)} for a
+     * grouped aggregate and SINGLETON for a global one.
+     *
+     * <p>A {@code pinAboveExchange} project still requires SINGLETON — it must stay in the coordinator
+     * fragment next to the aggregate whose literal config arg it carries, regardless of any window.
      */
     @Override
     public OpenSearchDistribution requiredInputDistribution(int inputIndex, int partitionCount, OpenSearchDistributionTraitDef traitDef) {
@@ -161,6 +240,12 @@ public class OpenSearchProject extends Project implements OpenSearchRelNode, Dis
         if (!containsOver() && !pinAboveExchange) {
             return null;
         }
+        if (!pinAboveExchange) {
+            List<Integer> partitionKeys = windowPartitionKeys();
+            if (!partitionKeys.isEmpty()) {
+                return traitDef.hash(partitionKeys, partitionCount);
+            }
+        }
         return traitDef.coordSingleton();
     }
 
@@ -168,8 +253,13 @@ public class OpenSearchProject extends Project implements OpenSearchRelNode, Dis
      * A plain project passes the child's distribution through, REMAPPED to output columns: a hash key at
      * input column {@code k} moves to wherever the projection places {@code k} (and degrades to ANY if the
      * projection drops it) — exactly {@link OpenSearchDistribution#apply} over the project's
-     * {@code getPartialMapping}. A window/pinned project gathered its input to SINGLETON, so its output is
-     * SINGLETON. Returns {@code null} when the child distribution is unknown.
+     * {@code getPartialMapping}.
+     *
+     * <p>A partitioned window that ran on hash-distributed input keeps that partitioning on its output — each
+     * worker still holds whole partitions — so it remaps the child distribution like a plain project, letting
+     * a co-partitioned parent (e.g. the {@code rn = 1} filter of {@code dedup}) avoid a needless gather. An
+     * unpartitioned window, or a pinned project, gathered its input to SINGLETON, so its output is SINGLETON.
+     * Returns {@code null} when the child distribution is unknown.
      */
     @Override
     public OpenSearchDistribution deriveOutputDistribution(
@@ -180,15 +270,45 @@ public class OpenSearchProject extends Project implements OpenSearchRelNode, Dis
             return null;
         }
         OpenSearchDistribution childDist = childDistributions.get(0);
-        if (containsOver() || pinAboveExchange) {
+        if (pinAboveExchange) {
             return traitDef.coordSingleton();
         }
-        org.apache.calcite.util.mapping.Mappings.TargetMapping mapping = Project.getPartialMapping(
-            getInput().getRowType().getFieldCount(),
-            getProjects()
-        );
-        org.apache.calcite.rel.RelDistribution remapped = childDist.apply(mapping);
-        return remapped instanceof OpenSearchDistribution osDist ? osDist : null;
+        if (containsOver() && !satisfiedByHash(childDist, windowPartitionKeys())) {
+            return traitDef.coordSingleton();
+        }
+        return remapHashKeys(childDist, traitDef);
+    }
+
+    /**
+     * Rewrites a HASH distribution's keys from input to output column ordinals by locating each key's
+     * {@link RexInputRef} in this project's expressions, degrading to ANY when the projection drops a key —
+     * Calcite's documented {@code RelDistribution.apply} contract.
+     *
+     * <p>Done by hand rather than through {@code childDist.apply(Project.getPartialMapping(...))}: the
+     * {@code TargetMapping} that {@code getPartialMapping} returns does not implement
+     * {@code getTargetOpt} for every projection shape and throws {@link UnsupportedOperationException}
+     * (hit as soon as a window project — whose expressions include a non-{@code RexInputRef} window
+     * column — asks to keep a hash distribution). Non-HASH distributions pass through unchanged.
+     */
+    private OpenSearchDistribution remapHashKeys(OpenSearchDistribution childDist, OpenSearchDistributionTraitDef traitDef) {
+        if (childDist.getType() != RelDistribution.Type.HASH_DISTRIBUTED || childDist.getKeys().isEmpty()) {
+            return childDist;
+        }
+        Map<Integer, Integer> inputToOutput = new LinkedHashMap<>();
+        for (int out = 0; out < getProjects().size(); out++) {
+            if (getProjects().get(out) instanceof RexInputRef ref) {
+                inputToOutput.putIfAbsent(ref.getIndex(), out);
+            }
+        }
+        List<Integer> remapped = new ArrayList<>(childDist.getKeys().size());
+        for (int key : childDist.getKeys()) {
+            Integer target = inputToOutput.get(key);
+            if (target == null) {
+                return traitDef.any();
+            }
+            remapped.add(target);
+        }
+        return childDist.withKeys(remapped);
     }
 
     @Override

@@ -58,6 +58,7 @@ import org.opensearch.be.datafusion.nativelib.NativeBridge;
 import org.opensearch.be.datafusion.nativelib.StreamHandle;
 import org.opensearch.be.datafusion.planner.adapter.NumericConversionFunctionAdapter;
 import org.opensearch.be.datafusion.planner.adapter.TimeConversionFunctionAdapter;
+import org.opensearch.index.engine.dataformat.DataFormatNames;
 import org.opensearch.index.engine.dataformat.DataFormatRegistry;
 import org.opensearch.index.engine.exec.IndexReaderProvider.Reader;
 import org.opensearch.index.shard.IndexShard;
@@ -499,6 +500,26 @@ public class DataFusionAnalyticsBackendPlugin implements AnalyticsSearchBackendP
         this.plugin = plugin;
     }
 
+    /**
+     * Formats whose columns this back-end can <em>compute over</em>: its own storage formats, plus any
+     * format it can reach only through a {@link org.opensearch.analytics.spi.ValueScanProducer}.
+     *
+     * <p>{@code lucene_doc_values} is in the second category. DataFusion cannot read Lucene doc values
+     * itself, but a plain shard's rows are handed to it as Arrow batches registered as its scan leaf,
+     * after which every operator above is ordinary DataFusion execution. Declaring the format here is
+     * what keeps DataFusion in {@code viableBackends} above a plain-index scan; without it the scan
+     * narrows to the producing back-end alone and any operator that back-end lacks — sort, window,
+     * CAST — has nowhere to run.
+     *
+     * <p>Deliberately NOT added to {@code plugin.getSupportedFormats()}, which lists the formats a
+     * native {@code DatafusionReader} exists for and drives reader lookup at execution time.
+     */
+    private Set<String> computeFormats() {
+        Set<String> formats = new HashSet<>(plugin.getSupportedFormats());
+        formats.add(DataFormatNames.LUCENE_DOC_VALUES);
+        return Set.copyOf(formats);
+    }
+
     @Override
     public String name() {
         return plugin.name();
@@ -535,7 +556,7 @@ public class DataFusionAnalyticsBackendPlugin implements AnalyticsSearchBackendP
                             JoinCapability.JoinKind.ANTI,
                             JoinCapability.JoinKind.CROSS
                         ),
-                        Set.copyOf(plugin.getSupportedFormats())
+                        computeFormats()
                     )
                 );
             }
@@ -562,7 +583,7 @@ public class DataFusionAnalyticsBackendPlugin implements AnalyticsSearchBackendP
                             WindowFunction.NTH_VALUE,
                             WindowFunction.PATTERN
                         ),
-                        Set.copyOf(plugin.getSupportedFormats())
+                        computeFormats()
                     )
                 );
             }
@@ -590,13 +611,13 @@ public class DataFusionAnalyticsBackendPlugin implements AnalyticsSearchBackendP
 
             @Override
             public Set<ScanCapability> scanCapabilities() {
-                Set<String> formats = Set.copyOf(plugin.getSupportedFormats());
+                Set<String> formats = computeFormats();
                 return Set.of(new ScanCapability.DocValues(formats, Set.copyOf(SUPPORTED_FIELD_TYPES)));
             }
 
             @Override
             public Set<FilterCapability> filterCapabilities() {
-                Set<String> formats = Set.copyOf(plugin.getSupportedFormats());
+                Set<String> formats = computeFormats();
                 Set<FilterCapability> caps = new HashSet<>();
                 for (ScalarFunction op : STANDARD_FILTER_OPS) {
                     for (FieldType type : SUPPORTED_FIELD_TYPES) {
@@ -618,7 +639,7 @@ public class DataFusionAnalyticsBackendPlugin implements AnalyticsSearchBackendP
 
             @Override
             public Set<ProjectCapability> projectCapabilities() {
-                Set<String> formats = Set.copyOf(plugin.getSupportedFormats());
+                Set<String> formats = computeFormats();
                 Set<ProjectCapability> caps = new HashSet<>();
                 for (ScalarFunction op : STANDARD_PROJECT_OPS) {
                     // PPL rex extract-mode multi-match returns array<varchar>; the planner
@@ -646,7 +667,7 @@ public class DataFusionAnalyticsBackendPlugin implements AnalyticsSearchBackendP
 
             @Override
             public Set<AggregateCapability> aggregateCapabilities() {
-                Set<String> formats = Set.copyOf(plugin.getSupportedFormats());
+                Set<String> formats = computeFormats();
                 Set<AggregateCapability> caps = new HashSet<>();
                 for (AggregateFunction func : AGG_FUNCTIONS) {
                     for (FieldType type : SUPPORTED_FIELD_TYPES) {
@@ -927,7 +948,10 @@ public class DataFusionAnalyticsBackendPlugin implements AnalyticsSearchBackendP
                         break;
                     }
                 }
-                if (dfReader == null) {
+                // A shard with no native reader is not necessarily unreadable: when a
+                // ValueScanProducer supplied this fragment's leaf, the plan reads from a named-input
+                // stream exactly like a worker fragment, and a null reader handle is expected.
+                if (dfReader == null && ctx.getValueScanProducer() == null) {
                     throw new IllegalStateException("No DatafusionReader available in the acquired reader");
                 }
             }

@@ -10,6 +10,7 @@ package org.opensearch.be.lucene;
 
 import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.index.engine.dataformat.DataFormat;
+import org.opensearch.index.engine.dataformat.DataFormatNames;
 import org.opensearch.index.engine.dataformat.FieldTypeCapabilities;
 import org.opensearch.index.mapper.FieldNamesFieldMapper;
 import org.opensearch.index.mapper.IdFieldMapper;
@@ -46,7 +47,7 @@ import static org.opensearch.index.engine.dataformat.FieldTypeCapabilities.Capab
 public class LuceneDataFormat extends DataFormat {
 
     /** The format name used to register Lucene in the {@link org.opensearch.index.engine.dataformat.DataFormatRegistry}. */
-    public static final String LUCENE_FORMAT_NAME = "lucene";
+    public static final String LUCENE_FORMAT_NAME = DataFormatNames.LUCENE;
 
     private static final Set<FieldTypeCapabilities> SUPPORTED_FIELDS = Set.of(
 
