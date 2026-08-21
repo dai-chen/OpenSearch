@@ -60,6 +60,7 @@ import org.opensearch.analytics.planner.rules.OpenSearchTopKRewriter;
 import org.opensearch.analytics.planner.rules.OpenSearchUnionRule;
 import org.opensearch.analytics.planner.rules.OpenSearchUnionSplitRule;
 import org.opensearch.analytics.planner.rules.OpenSearchValuesRule;
+import org.opensearch.analytics.planner.rules.OpenSearchWindowGroupLimitRewriter;
 
 import java.util.List;
 import java.util.Optional;
@@ -156,6 +157,15 @@ public class PlannerImpl {
         if (topK.isPresent()) {
             modifiedRelNode = topK.get();
             RelNodeUtils.logPlan(LOGGER, "After TopK rewrite", modifiedRelNode);
+        }
+        // Rank-limited windows: push a local copy of the window + rank bound below the exchange so a
+        // shard emits only its own top-N per partition. Runs after the aggregate TopK rewrite because
+        // the two match disjoint shapes (grouped aggregate vs windowed rank) and neither consumes the
+        // other's output.
+        Optional<RelNode> windowGroupLimit = OpenSearchWindowGroupLimitRewriter.rewrite(modifiedRelNode);
+        if (windowGroupLimit.isPresent()) {
+            modifiedRelNode = windowGroupLimit.get();
+            RelNodeUtils.logPlan(LOGGER, "After window group-limit rewrite", modifiedRelNode);
         }
         Optional<RelNode> sortPushdown = OpenSearchSortPushdownRewriter.rewrite(modifiedRelNode);
         if (sortPushdown.isPresent()) {
