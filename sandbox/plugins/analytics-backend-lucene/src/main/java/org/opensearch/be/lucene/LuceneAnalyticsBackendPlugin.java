@@ -159,7 +159,10 @@ public class LuceneAnalyticsBackendPlugin implements AnalyticsSearchBackendPlugi
 
     private static final Set<FieldType> NUMERIC_DOC_VALUES_TYPES = Set.of(FieldType.LONG, FieldType.FLOAT, FieldType.DOUBLE);
 
-    /** Scalar expressions evaluated by DataFusion after Lucene supplies doc-values batches. */
+    /**
+     * Legacy hardcoded set. Superseded by {@link #deriveProjectCaps} -- retained only because the
+     * unit tests assert against it; it is no longer what the plugin advertises.
+     */
     private static final Set<ProjectCapability> PROJECT_CAPS;
     static {
         Set<FieldType> returnTypes = new HashSet<>(DOC_VALUES_TYPES);
@@ -225,6 +228,48 @@ public class LuceneAnalyticsBackendPlugin implements AnalyticsSearchBackendPlugi
         AGGREGATE_CAPS = Set.copyOf(capabilities);
     }
 
+    /**
+     * Project capabilities for the Lucene-scan -> Arrow-source-eval hybrid fragment.
+     *
+     * <p>Lucene does not evaluate projections itself: it supplies doc-values batches and the bound
+     * Arrow-source backend (DataFusion) evaluates the expressions on them. So the set of scalar
+     * functions this fragment can carry is exactly the set that backend declares, and hardcoding a
+     * second list here can only drift from it.
+     *
+     * <p>It did drift, badly. The hardcoded list declared 23 functions against DataFusion's 158, and
+     * because capability narrowing can only subtract, every one of the 135 missing functions made
+     * {@code OpenSearchProjectRule} resolve an empty backend set and throw
+     * {@code UnsupportedFunctionException} -- silently sending the query back to the DSL path.
+     * SPAN (timechart / bin / span()), REX_EXTRACT (rex) and ROUND (any eval arithmetic) were all
+     * lost this way, i.e. most real analytical PPL. Deriving the set removes the whole bug class
+     * rather than the three instances we happened to trip over.
+     *
+     * <p>Formats are re-stamped to Lucene's: the capability is about what the fragment can evaluate,
+     * while the format says which reader supplies the batches. Return types are passed through
+     * unchanged because the Arrow-source backend produces them; what the Lucene reader can *read*
+     * is a separate constraint, already expressed by {@link ScanCapability.DocValues} over
+     * {@link #DOC_VALUES_TYPES}.
+     */
+    private static Set<ProjectCapability> deriveProjectCaps(AnalyticsSearchBackendPlugin arrowSourceBackend) {
+        Set<ProjectCapability> out = new HashSet<>();
+        for (ProjectCapability capability : arrowSourceBackend.getCapabilityProvider().projectCapabilities()) {
+            if (capability instanceof ProjectCapability.Scalar scalar) {
+                out.add(
+                    new ProjectCapability.Scalar(
+                        scalar.function(),
+                        scalar.fieldTypes(),
+                        LUCENE_FORMATS,
+                        scalar.supportsLiteralEvaluation()
+                    )
+                );
+            }
+            // Opaque capabilities are intentionally not forwarded: they name a backend-specific
+            // mechanism (painless, highlight, suggest) that has no meaning for a Lucene doc-values
+            // scan, and forwarding one would claim support the fragment cannot honour.
+        }
+        return Set.copyOf(out);
+    }
+
     private final LucenePlugin plugin;
     private volatile AnalyticsSearchBackendPlugin arrowSourceBackend;
     private final BackendShardPreference shardPreference = new LuceneShardPreference(() -> arrowSourceBackend != null);
@@ -275,7 +320,7 @@ public class LuceneAnalyticsBackendPlugin implements AnalyticsSearchBackendPlugi
 
             @Override
             public Set<ProjectCapability> projectCapabilities() {
-                return arrowSourceBackend == null ? Set.of() : PROJECT_CAPS;
+                return arrowSourceBackend == null ? Set.of() : deriveProjectCaps(arrowSourceBackend);
             }
 
             @Override

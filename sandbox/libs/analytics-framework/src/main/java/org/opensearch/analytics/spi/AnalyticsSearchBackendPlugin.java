@@ -68,9 +68,14 @@ public interface AnalyticsSearchBackendPlugin {
     /**
      * Executes a backend-native plan over a caller-provided Arrow batch source.
      * Ownership of {@code sourceFactory} transfers to this method, including on failure.
+     *
+     * @param importStagingAllocator node-scoped and unbounded — result batches are imported onto it
+     *                               and the transport keeps charging it after the returned stream
+     *                               closes, so it must be supplied rather than minted per stream.
      */
     default EngineResultStream executeArrowBatchSource(
         BufferAllocator resultAllocator,
+        BufferAllocator importStagingAllocator,
         ArrowBatchSourcePlan plan,
         ArrowBatchSourceFactory sourceFactory,
         Task task,

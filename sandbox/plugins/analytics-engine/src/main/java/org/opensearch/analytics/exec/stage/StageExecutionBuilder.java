@@ -11,6 +11,7 @@ package org.opensearch.analytics.exec.stage;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensearch.analytics.exec.AnalyticsSearchTransportService;
+import org.opensearch.analytics.AnalyticsSettings;
 import org.opensearch.analytics.exec.QueryContext;
 import org.opensearch.analytics.exec.RowProducingSink;
 import org.opensearch.analytics.exec.stage.coordinator.LateMaterializationStageExecutionFactory;
@@ -55,6 +56,7 @@ public class StageExecutionBuilder {
     private static final Logger logger = LogManager.getLogger(StageExecutionBuilder.class);
 
     private final Map<StageExecutionType, StageExecutionFactory> factories;
+    private final ClusterService clusterService;
 
     /**
      * Guice-injected constructor. Registers default factories for every value
@@ -62,6 +64,7 @@ public class StageExecutionBuilder {
      */
     @Inject
     public StageExecutionBuilder(ClusterService clusterService, AnalyticsSearchTransportService dispatcher) {
+        this.clusterService = clusterService;
         this.factories = new HashMap<>();
         registerFactory(StageExecutionType.SHARD_FRAGMENT, new ShardFragmentStageExecutionFactory(clusterService, dispatcher));
         registerFactory(StageExecutionType.COORDINATOR_REDUCE, new ReduceStageExecutionFactory());
@@ -94,7 +97,11 @@ public class StageExecutionBuilder {
      */
     public StageExecution buildRootExecution(Stage rootStage, QueryContext config) {
         // TODO: Update to read directly from back-end provided ExchangeSource when the root stage has a fragment
-        StageExecution rootExec = buildStageExecution(rootStage, new RowProducingSink(), config);
+        // The row cap is the coordinator's terminal buffer size. RowProducingSink drops WHOLE
+        // batches once the running total reaches it, silently, which shows up as entire groups
+        // missing from an otherwise-correct result. Read it per query so it stays dynamic.
+        long maxResultRows = clusterService.getClusterSettings().get(AnalyticsSettings.COORDINATOR_MAX_RESULT_ROWS);
+        StageExecution rootExec = buildStageExecution(rootStage, new RowProducingSink(maxResultRows), config);
         if ((rootExec instanceof DataProducer) == false) {
             throw new IllegalStateException(
                 "Root execution "

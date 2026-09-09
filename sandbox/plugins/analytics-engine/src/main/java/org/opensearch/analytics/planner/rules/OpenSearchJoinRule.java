@@ -21,6 +21,7 @@ import org.opensearch.analytics.planner.rel.OpenSearchDistributionTraitDef;
 import org.opensearch.analytics.planner.rel.OpenSearchExchangeReducer;
 import org.opensearch.analytics.planner.rel.OpenSearchJoin;
 import org.opensearch.analytics.planner.rel.OpenSearchRelNode;
+import org.opensearch.analytics.spi.AnalyticsSearchBackendPlugin;
 import org.opensearch.analytics.spi.JoinCapability;
 
 import java.util.ArrayList;
@@ -82,6 +83,31 @@ public class OpenSearchJoinRule extends RelOptRule {
             }
             return true;
         });
+        if (viableBackends.isEmpty()) {
+            // Same narrowing defect as narrowByWindowCapability in OpenSearchProjectRule: this could
+            // only ever SUBTRACT from the children's viable sets. A join executes at the coordinator
+            // (note the coordSingleton trait below) once both inputs have been exchanged, so the
+            // children's scan backends do not have to support the join at all -- any backend that can
+            // receive an exchange and declares the join kind can run it.
+            //
+            // Concretely: `timechart span=1h count() by k` lowers to two aggregations over the same
+            // Lucene scan plus a ROW_NUMBER window and a LEFT self-join (its top-10-series cap). The
+            // two sides mark to different backends, so the intersection is empty, and the rule threw
+            // "No backend supports join kind [LEFT] among viable backends []" -- making every
+            // timechart query fail even though DataFusion is exactly the backend that would execute
+            // the coordinator stage.
+            for (AnalyticsSearchBackendPlugin backend : context.getCapabilityRegistry().getBackends()) {
+                if (backend.getExchangeSinkProvider() == null) {
+                    continue;
+                }
+                for (JoinCapability cap : backend.getCapabilityProvider().joinCapabilities()) {
+                    if (cap.kinds().contains(requiredKind)) {
+                        viableBackends.add(backend.name());
+                        break;
+                    }
+                }
+            }
+        }
         if (viableBackends.isEmpty()) {
             throw new IllegalStateException(
                 "No backend supports join kind [" + requiredKind + "] among viable backends " + candidateBackends
