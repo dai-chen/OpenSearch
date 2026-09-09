@@ -40,6 +40,17 @@ testClusters {
     testDistribution = 'archive'
     if (numZones > 1) numberOfZones = numZones
     if (numNodes > 1) numberOfNodes = numNodes
+    // testclusters defaults to -Xms512m -Xmx512m, which OOMs on high-cardinality grouped
+    // aggregations (50k+ groups): "fatal error in thread [sql-worker]
+    // java.lang.OutOfMemoryError: Java heap space". Applied unconditionally so the analytics
+    // cluster and the no-analytics baseline cluster run with identical heap — differing heap
+    // between benchmark arms would be a confound. Appended after the defaults, so this -Xmx wins.
+    // 4g, not 2g: at 2g the Calcite arm sat ON the plugins.query.memory_limit breaker
+    // ("usage: 100.4%") and spent 25-32% of its wall clock in young GC, with no warm steady state
+    // (ten consecutive reps drifted 9.3s -> 12.5s as heap filled). Benchmarking a memory-starved
+    // baseline against a comfortable alternative measures the heap, not the engines.
+    jvmArgs '-Xms4g', '-Xmx4g'
+
     if (findProperty("installedPlugins")) {
       installedPlugins = Eval.me(installedPlugins)
 
@@ -98,6 +109,29 @@ testClusters {
           systemProperty 'java.library.path', nativeLibDir
           jvmArgs '--add-opens=java.base/java.nio=ALL-UNNAMED'
           jvmArgs '--enable-native-access=ALL-UNNAMED'
+        }
+        if (p.equals("analytics-engine")) {
+          // POC-ONLY (not for upstream): mirror sandbox/qa/analytics-engine-rest's
+          // configureAnalyticsCluster so `./gradlew run` matches the known-good IT cluster.
+          //
+          // Fragment dispatch is streaming-only.
+          systemProperty 'opensearch.experimental.feature.transport.stream.enabled', 'true'
+          // Calcite's Aggregate.typeMatchesInferred assertion trips on distributed FINAL
+          // aggregates; the engine's substrait emit is the source of truth.
+          jvmArgs '-da:org.apache.calcite...'
+          // NOTE: deliberately NOT setting cluster.pluggable.dataformat=composite. That routes
+          // every PPL/SQL query to the analytics engine, which defeats the point — routing is a
+          // per-query plan-shape decision made by the SQL plugin's
+          // plugins.calcite.analytics.enabled gate.
+          //
+          // Make a plain index readable by the Lucene doc-values path: the composite-engine plugin
+          // stamps index.composite.primary_data_format onto every new index from this cluster
+          // default (itself defaulting to "parquet"), and the stamped setting is Final. Without
+          // this, an ordinary index is stamped "parquet" and the shard fragment dies with
+          // "Backend [datafusion] cannot acquire a reader from EngineBackedIndexer".
+          setting 'cluster.composite.primary_data_format', 'lucene'
+          // Exercise all predicate shapes with Lucene filter delegation enabled.
+          setting 'analytics.delegation.lucene.blocked_predicates', '[]'
         }
       }
     }
