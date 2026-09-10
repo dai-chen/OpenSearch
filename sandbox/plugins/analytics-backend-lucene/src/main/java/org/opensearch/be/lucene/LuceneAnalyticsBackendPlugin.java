@@ -18,11 +18,13 @@ import org.opensearch.analytics.spi.AnalyticsSearchBackendPlugin;
 import org.opensearch.analytics.spi.BackendCapabilityProvider;
 import org.opensearch.analytics.spi.BackendShardPreference;
 import org.opensearch.analytics.spi.CommonExecutionContext;
+import org.opensearch.analytics.spi.DataTransferCapability;
 import org.opensearch.analytics.spi.DelegatedExpression;
 import org.opensearch.analytics.spi.DelegatedPredicateSerializer;
 import org.opensearch.analytics.spi.DelegatedSubtreeConvertor;
 import org.opensearch.analytics.spi.DelegationType;
 import org.opensearch.analytics.spi.EngineCapability;
+import org.opensearch.analytics.spi.ExchangeSinkProvider;
 import org.opensearch.analytics.spi.FieldType;
 import org.opensearch.analytics.spi.FilterCapability;
 import org.opensearch.analytics.spi.FilterDelegationHandle;
@@ -225,6 +227,9 @@ public class LuceneAnalyticsBackendPlugin implements AnalyticsSearchBackendPlugi
         for (AggregateFunction function : List.of(AggregateFunction.COUNT, AggregateFunction.MIN, AggregateFunction.MAX)) {
             capabilities.add(AggregateCapability.simple(function, DOC_VALUES_TYPES, LUCENE_FORMATS));
         }
+        for (AggregateFunction function : List.of(AggregateFunction.LIST, AggregateFunction.VALUES)) {
+            capabilities.add(AggregateCapability.stateExpanding(function, DOC_VALUES_TYPES, LUCENE_FORMATS));
+        }
         AGGREGATE_CAPS = Set.copyOf(capabilities);
     }
 
@@ -324,6 +329,18 @@ public class LuceneAnalyticsBackendPlugin implements AnalyticsSearchBackendPlugi
             }
 
             @Override
+            public Set<DataTransferCapability> dataTransferCapabilities() {
+                if (arrowSourceBackend == null) {
+                    return Set.of();
+                }
+                return arrowSourceBackend.getCapabilityProvider()
+                    .dataTransferCapabilities()
+                    .stream()
+                    .filter(capability -> capability.kind() == DataTransferCapability.Kind.PRODUCER)
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            }
+
+            @Override
             public Set<DelegationType> acceptedDelegations() {
                 return Set.of(DelegationType.FILTER);
             }
@@ -406,7 +423,12 @@ public class LuceneAnalyticsBackendPlugin implements AnalyticsSearchBackendPlugi
 
     @Override
     public FragmentInstructionHandlerFactory getInstructionHandlerFactory() {
-        return new LuceneInstructionHandlerFactory(plugin);
+        return new LuceneInstructionHandlerFactory(plugin, arrowSourceBackend);
+    }
+
+    @Override
+    public ExchangeSinkProvider getShuffleSinkProvider() {
+        return arrowSourceBackend == null ? null : arrowSourceBackend.getShuffleSinkProvider();
     }
 
     @Override
@@ -422,6 +444,11 @@ public class LuceneAnalyticsBackendPlugin implements AnalyticsSearchBackendPlugi
             engine.prepare(ctx);
             return engine;
         };
+    }
+
+    @Override
+    public int defaultShuffleParallelism(org.opensearch.cluster.ClusterState state) {
+        return arrowSourceBackend == null ? 1 : arrowSourceBackend.defaultShuffleParallelism(state);
     }
 
     /** Package-private — also reused by {@link LuceneScanInstructionHandler} in driver mode. */

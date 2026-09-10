@@ -234,6 +234,15 @@ final class LuceneFragmentConvertor implements FragmentConvertor {
             case DOUBLE -> Type.newBuilder().setFp64(Type.FP64.newBuilder().setNullability(n)).build();
             case FLOAT, REAL -> Type.newBuilder().setFp32(Type.FP32.newBuilder().setNullability(n)).build();
             case VARCHAR, CHAR -> Type.newBuilder().setString(Type.String.newBuilder().setNullability(n)).build();
+            case ARRAY -> {
+                RelDataType componentType = type.getComponentType();
+                if (componentType == null) {
+                    throw new IllegalStateException("Lucene convertSchemaOnlyRead: ARRAY type has no component type: " + type);
+                }
+                yield Type.newBuilder()
+                    .setList(Type.List.newBuilder().setType(toSubstraitType(componentType)).setNullability(n))
+                    .build();
+            }
             case DATE, TIMESTAMP, TIMESTAMP_WITH_LOCAL_TIME_ZONE -> Type.newBuilder()
                 .setPrecisionTimestamp(Type.PrecisionTimestamp.newBuilder().setPrecision(3).setNullability(n))
                 .build();

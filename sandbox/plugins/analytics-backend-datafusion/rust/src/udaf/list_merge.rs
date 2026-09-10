@@ -6,18 +6,20 @@
  * compatible open source license.
  */
 
-//! Cross-shard list-concatenation UDAFs for FINAL-side LIST and VALUES.
+//! Partial VALUES collection and cross-shard list-concatenation UDAFs.
 //!
+//! `values_partial(value)`      — exact distinct sorted shard-local values.
 //! `list_merge(state)`         — concatenates per-shard `List<elem>` states.
 //! `list_merge_distinct(state)` — concatenates and re-deduplicates.
 //!
-//! PARTIAL still runs DataFusion's native `array_agg` (with or without DISTINCT);
-//! FINAL routes here so the per-shard arrays flatten into one list rather than
+//! LIST partials still run DataFusion's native `array_agg`; FINAL routes here so
+//! the per-shard arrays flatten into one list rather than
 //! getting re-wrapped (DataFusion's substrait consumer ignores AggregationPhase
 //! and would lower a FINAL `array_agg(state)` as a single-pass aggregate that
 //! treats each row's list as one element).
 
 use std::collections::HashSet;
+use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -32,8 +34,132 @@ use datafusion::logical_expr::{
 };
 
 pub fn register_all(ctx: &SessionContext) {
+    ctx.register_udaf(AggregateUDF::from(ValuesPartialUdaf::new()));
     ctx.register_udaf(AggregateUDF::from(ListMergeUdaf::new(false)));
     ctx.register_udaf(AggregateUDF::from(ListMergeUdaf::new(true)));
+}
+
+#[derive(Debug)]
+pub struct ValuesPartialUdaf {
+    signature: Signature,
+}
+
+impl ValuesPartialUdaf {
+    pub fn new() -> Self {
+        Self {
+            signature: Signature::any(1, Volatility::Immutable),
+        }
+    }
+}
+
+impl PartialEq for ValuesPartialUdaf {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+impl Eq for ValuesPartialUdaf {}
+impl Hash for ValuesPartialUdaf {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "values_partial".hash(state);
+    }
+}
+
+impl AggregateUDFImpl for ValuesPartialUdaf {
+    fn name(&self) -> &str {
+        "values_partial"
+    }
+
+    fn signature(&self) -> &Signature {
+        &self.signature
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::List(Arc::new(Field::new(
+            "item",
+            DataType::Utf8,
+            true,
+        ))))
+    }
+
+    fn accumulator(&self, _acc_args: AccumulatorArgs) -> Result<Box<dyn Accumulator>> {
+        Ok(Box::new(ValuesPartialAccumulator::default()))
+    }
+
+    fn state_fields(&self, args: StateFieldsArgs) -> Result<Vec<FieldRef>> {
+        Ok(vec![Arc::new(Field::new(
+            format!("{}[buf]", args.name),
+            args.return_field.data_type().clone(),
+            true,
+        ))])
+    }
+}
+
+#[derive(Debug, Default)]
+struct ValuesPartialAccumulator {
+    values: HashSet<ScalarValue>,
+}
+
+impl ValuesPartialAccumulator {
+    fn result(&self) -> Result<ScalarValue> {
+        let mut values: Vec<ScalarValue> = self.values.iter().cloned().collect();
+        let mut compare_error = Ok(());
+        values.sort_by(|left, right| {
+            left.try_cmp(right).unwrap_or_else(|error| {
+                compare_error = Err(error);
+                Ordering::Equal
+            })
+        });
+        compare_error?;
+        Ok(ScalarValue::List(ScalarValue::new_list_nullable(
+            &values,
+            &DataType::Utf8,
+        )))
+    }
+
+    fn add_array(&mut self, values: &ArrayRef) -> Result<()> {
+        for i in 0..values.len() {
+            if values.is_null(i) {
+                continue;
+            }
+            let value = ScalarValue::try_from_array(values, i)?;
+            self.values.insert(value.cast_to(&DataType::Utf8)?);
+        }
+        Ok(())
+    }
+}
+
+impl Accumulator for ValuesPartialAccumulator {
+    fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
+        if let Some(values) = values.first() {
+            self.add_array(values)?;
+        }
+        Ok(())
+    }
+
+    fn evaluate(&mut self) -> Result<ScalarValue> {
+        self.result()
+    }
+
+    fn size(&self) -> usize {
+        std::mem::size_of_val(self) + self.values.iter().map(ScalarValue::size).sum::<usize>()
+    }
+
+    fn state(&mut self) -> Result<Vec<ScalarValue>> {
+        Ok(vec![self.result()?])
+    }
+
+    fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
+        let Some(states) = states.first() else {
+            return Ok(());
+        };
+        let lists: &ListArray = states.as_list();
+        for i in 0..lists.len() {
+            if !lists.is_null(i) {
+                self.add_array(&lists.value(i))?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -77,6 +203,13 @@ fn list_element_type(dt: &DataType) -> Result<DataType> {
     }
 }
 
+fn declared_element_type(dt: &DataType) -> Result<DataType> {
+    match list_element_type(dt)? {
+        DataType::Utf8View => Ok(DataType::Utf8),
+        other => Ok(other),
+    }
+}
+
 impl AggregateUDFImpl for ListMergeUdaf {
     fn name(&self) -> &str {
         self.name
@@ -90,23 +223,15 @@ impl AggregateUDFImpl for ListMergeUdaf {
         if arg_types.is_empty() {
             return exec_err!("{}() requires one argument", self.name);
         }
-        let element = list_element_type(&arg_types[0])?;
+        let element = declared_element_type(&arg_types[0])?;
         Ok(DataType::List(Arc::new(Field::new("item", element, true))))
     }
 
     fn accumulator(&self, acc_args: AccumulatorArgs) -> Result<Box<dyn Accumulator>> {
-        let raw_arg0 = acc_args
-            .exprs
-            .first()
-            .map(|e| e.data_type(acc_args.schema))
-            .transpose()?
-            .ok_or_else(|| {
-                datafusion::common::DataFusionError::Execution(format!(
-                    "{}: missing argument",
-                    self.name
-                ))
-            })?;
-        let element_type = list_element_type(&raw_arg0)?;
+        // The physical input can contain Utf8View even when Substrait declared
+        // List<Utf8>. Emit the UDAF's declared return element type so the
+        // evaluated ScalarValue matches the aggregate output schema.
+        let element_type = list_element_type(acc_args.return_type())?;
         Ok(Box::new(ListMergeAccumulator::new(
             element_type,
             self.distinct,
@@ -179,13 +304,29 @@ impl Accumulator for ListMergeAccumulator {
             }
             let inner = lists.value(i);
             for j in 0..inner.len() {
-                self.push(ScalarValue::try_from_array(&inner, j)?);
+                let value = ScalarValue::try_from_array(&inner, j)?;
+                let value = if value.data_type() == self.element_type {
+                    value
+                } else {
+                    value.cast_to(&self.element_type)?
+                };
+                self.push(value);
             }
         }
         Ok(())
     }
 
     fn evaluate(&mut self) -> Result<ScalarValue> {
+        if self.distinct {
+            let mut compare_error = Ok(());
+            self.buf.sort_by(|left, right| {
+                left.try_cmp(right).unwrap_or_else(|error| {
+                    compare_error = Err(error);
+                    Ordering::Equal
+                })
+            });
+            compare_error?;
+        }
         Ok(self.current_list())
     }
 
@@ -207,7 +348,9 @@ impl Accumulator for ListMergeAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::array::{Int32Array, ListBuilder, StringArray, StringBuilder};
+    use datafusion::arrow::array::{
+        Int32Array, ListBuilder, StringArray, StringBuilder, StringViewBuilder,
+    };
 
     fn list_of_ints(rows: &[&[Option<i32>]]) -> ArrayRef {
         let mut builder = ListBuilder::new(datafusion::arrow::array::Int32Builder::new());
@@ -305,5 +448,61 @@ mod tests {
             o => panic!("expected list, got {o:?}"),
         };
         assert_eq!(result, vec!["a".to_string(), "b".into(), "c".into()]);
+    }
+
+    #[test]
+    fn string_view_input_conforms_to_declared_utf8_output() {
+        let mut builder = ListBuilder::new(StringViewBuilder::new());
+        builder.values().append_value("a");
+        builder.values().append_value("b");
+        builder.append(true);
+        let input: ArrayRef = Arc::new(builder.finish());
+
+        let mut acc = ListMergeAccumulator::new(DataType::Utf8, true);
+        acc.update_batch(&[input]).unwrap();
+        let result = acc.evaluate().unwrap();
+        assert_eq!(
+            result.data_type(),
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true)))
+        );
+
+        let udaf = ListMergeUdaf::new(true);
+        assert_eq!(
+            udaf.return_type(&[DataType::List(Arc::new(Field::new(
+                "item",
+                DataType::Utf8View,
+                true
+            )))])
+            .unwrap(),
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true)))
+        );
+    }
+
+    #[test]
+    fn values_partial_normalizes_deduplicates_and_sorts_string_views() {
+        let input: ArrayRef = Arc::new(datafusion::arrow::array::StringViewArray::from(vec![
+            Some("host-c"),
+            Some("host-a"),
+            Some("host-c"),
+            None,
+            Some("host-b"),
+        ]));
+        let mut acc = ValuesPartialAccumulator::default();
+        acc.update_batch(&[input]).unwrap();
+
+        let result = acc.evaluate().unwrap();
+        assert_eq!(
+            result.data_type(),
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true)))
+        );
+        let ScalarValue::List(list) = result else {
+            panic!("expected list");
+        };
+        let values = list.value(0);
+        let values = values.as_any().downcast_ref::<StringArray>().unwrap();
+        assert_eq!(
+            (0..values.len()).map(|i| values.value(i)).collect::<Vec<_>>(),
+            vec!["host-a", "host-b", "host-c"]
+        );
     }
 }

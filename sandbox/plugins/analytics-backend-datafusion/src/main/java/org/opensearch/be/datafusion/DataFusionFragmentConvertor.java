@@ -299,6 +299,29 @@ public class DataFusionFragmentConvertor implements FragmentConvertor {
     };
 
     /**
+     * PARTIAL-side VALUES. DataFusion's native array_agg can infer List&lt;Utf8&gt; from
+     * Substrait while its physical string input is Utf8View, producing an invalid batch.
+     * This UDAF normalizes the element representation while collecting exact distinct values.
+     */
+    static final SqlAggFunction LOCAL_VALUES_PARTIAL_OP = new LocalAggOp("values_partial", SqlKind.OTHER_FUNCTION, opBinding -> {
+        RelDataTypeFactory tf = opBinding.getTypeFactory();
+        return tf.createTypeWithNullability(tf.createArrayType(tf.createSqlType(SqlTypeName.VARCHAR), -1), true);
+    }, OperandTypes.ANY) {
+        @Override
+        public Optional<RexNode> rewriteDataArg(int argIndex, RexNode argRef, RexBuilder rexBuilder, RelDataTypeFactory typeFactory) {
+            if (argRef.getType().getSqlTypeName() == SqlTypeName.VARCHAR) {
+                return Optional.empty();
+            }
+            return Optional.of(castToVarchar(argRef, rexBuilder, typeFactory));
+        }
+
+        @Override
+        public boolean filtersNullArgs(AggregateCall call) {
+            return true;
+        }
+    };
+
+    /**
      * Casts a list/values element to VARCHAR matching the SQL plugin's {@code String.valueOf}
      * rendering: ip→{@code ip_to_string}, binary→{@code binary_to_base64}, else a plain CAST.
      * Unlike the {@code cast}/{@code tostring} path this does NOT uppercase booleans — native
@@ -438,6 +461,7 @@ public class DataFusionFragmentConvertor implements FragmentConvertor {
         FunctionMappings.s(LOCAL_FIRST_OP, "first_value"),
         FunctionMappings.s(LOCAL_LAST_OP, "last_value"),
         FunctionMappings.s(LOCAL_ARRAY_AGG_OP, "array_agg"),
+        FunctionMappings.s(LOCAL_VALUES_PARTIAL_OP, "values_partial"),
         FunctionMappings.s(LOCAL_LIST_MERGE_OP, "list_merge"),
         FunctionMappings.s(LOCAL_LIST_MERGE_DISTINCT_OP, "list_merge_distinct"),
         FunctionMappings.s(LOCAL_PERCENTILE_APPROX_OP, "approx_percentile_cont"),
@@ -485,7 +509,7 @@ public class DataFusionFragmentConvertor implements FragmentConvertor {
     public byte[] attachPartialAggOnTop(RelNode partialAggFragment, byte[] innerBytes) {
         LOGGER.debug("Attaching partial aggregate on top of {} inner bytes", innerBytes.length);
         Plan inner = decodePlan(innerBytes);
-        Rel wrapper = convertStandalone(partialAggFragment);
+        Rel wrapper = convertStandalone(rewriteStageInputScans(partialAggFragment));
         Plan rewired = rewire(
             inner,
             withAggregationPhase(wrapper, Expression.AggregationPhase.INITIAL_TO_INTERMEDIATE),

@@ -45,6 +45,7 @@ final class PplAggregateCallRewriter {
         DataFusionFragmentConvertor.LOCAL_FIRST_OP,
         DataFusionFragmentConvertor.LOCAL_LAST_OP,
         DataFusionFragmentConvertor.LOCAL_ARRAY_AGG_OP,
+        DataFusionFragmentConvertor.LOCAL_VALUES_PARTIAL_OP,
         DataFusionFragmentConvertor.LOCAL_LIST_MERGE_OP,
         DataFusionFragmentConvertor.LOCAL_LIST_MERGE_DISTINCT_OP,
         DataFusionFragmentConvertor.LOCAL_PERCENTILE_APPROX_OP,
@@ -172,11 +173,13 @@ final class PplAggregateCallRewriter {
                     targetDistinct = false;
                     explicitReturnType = arg0Type;
                 } else {
-                    targetOp = DataFusionFragmentConvertor.LOCAL_ARRAY_AGG_OP;
-                    targetDistinct = isValues;
+                    targetOp = isValues
+                        ? DataFusionFragmentConvertor.LOCAL_VALUES_PARTIAL_OP
+                        : DataFusionFragmentConvertor.LOCAL_ARRAY_AGG_OP;
+                    targetDistinct = false;
                     // PPL list/values is ARRAY<VARCHAR>; the operand is cast to VARCHAR on the
-                    // substrait arg (LOCAL_ARRAY_AGG_OP#rewriteDataArg). Nullable array matches the
-                    // op's inferred type (a NOT NULL array trips Calcite's typeMatchesInferred).
+                    // Substrait arg. Nullable array matches the op's inferred type (a NOT NULL
+                    // array trips Calcite's typeMatchesInferred).
                     RelDataTypeFactory typeFactory = agg.getCluster().getTypeFactory();
                     RelDataType varchar = typeFactory.createSqlType(SqlTypeName.VARCHAR);
                     RelDataType arrayType = typeFactory.createArrayType(varchar, -1);

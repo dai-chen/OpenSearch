@@ -95,7 +95,9 @@ public class OpenSearchAggregateSplitRule extends RelOptRule {
             // the structural split — its engine-native merge (sketch state, reducer == self) is
             // wired at DistributedAggregateRewriter.overrideExchangeType.
             AggregateFunction.Type type = aggregateType(aggCall.getAggregation());
-            if (type == AggregateFunction.Type.STATE_EXPANDING) {
+            String functionName = aggCall.getAggregation().getName();
+            boolean hasMergeUdaf = "LIST".equalsIgnoreCase(functionName) || "VALUES".equalsIgnoreCase(functionName);
+            if (type == AggregateFunction.Type.STATE_EXPANDING && !hasMergeUdaf) {
                 return true;
             }
             // Residual DISTINCT (e.g. multi-arg COUNT(DISTINCT a, b) that didn't match the

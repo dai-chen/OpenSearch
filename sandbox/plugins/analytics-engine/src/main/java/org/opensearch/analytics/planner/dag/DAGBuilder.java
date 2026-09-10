@@ -416,12 +416,21 @@ public class DAGBuilder {
         parentChildStages.add(childStage);
 
         OpenSearchRelNode shuffleInput = (OpenSearchRelNode) shuffle.getInput();
+        RelNode unwrappedParent = RelNodeUtils.unwrapHep(parent);
+        List<String> parentViable = unwrappedParent instanceof OpenSearchRelNode openSearchParent
+            ? openSearchParent.getViableBackends()
+            : shuffle.getViableBackends();
+        List<String> consumerViable = CapabilityResolutionUtils.filterByCompatibleShuffleConsumer(
+            registry,
+            shuffle.getViableBackends(),
+            parentViable
+        );
         OpenSearchStageInputScan stageInput = new OpenSearchStageInputScan(
             shuffle.getCluster(),
             shuffle.getTraitSet(),
             childStageId,
             shuffle.getInput().getRowType(),
-            shuffle.getViableBackends(),
+            consumerViable,
             shuffleInput.getOutputFieldStorage()
         );
         return new OpenSearchShuffleExchange(
@@ -430,7 +439,7 @@ public class DAGBuilder {
             stageInput,
             shuffle.getHashKeys(),
             shuffle.getPartitionCount(),
-            shuffle.getViableBackends()
+            consumerViable
         );
     }
 

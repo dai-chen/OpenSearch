@@ -123,6 +123,18 @@ public interface AnalyticsSearchBackendPlugin {
     }
 
     /**
+     * Returns the sink provider used when this backend drives a hash-shuffle producer.
+     *
+     * <p>Most execution backends use their normal exchange provider for both coordinator
+     * reduction and shuffle production. A scan backend may override this independently when
+     * it emits batches through a bound execution backend but must not advertise itself as a
+     * coordinator-side reducer.
+     */
+    default ExchangeSinkProvider getShuffleSinkProvider() {
+        return getExchangeSinkProvider();
+    }
+
+    /**
      * Returns the instruction handler factory for this backend. Used at the coordinator
      * to create instruction nodes (backend attaches custom config) and at the data node
      * to create handlers that apply instructions to the execution context.

@@ -82,9 +82,17 @@ aggregate_functions:
         return: any
   - name: array_agg
     description: >-
-      PPL `list(field)` (and `values(field)` with `INVOCATION_DISTINCT`) —
-      DataFusion native array_agg. Used at PARTIAL only; FINAL re-aggregates
-      via list_merge / list_merge_distinct.
+      PPL `list(field)` — DataFusion native array_agg. Used at PARTIAL only;
+      FINAL re-aggregates via list_merge.
+    impls:
+      - args:
+          - name: x
+            value: any
+        return: any
+  - name: values_partial
+    description: >-
+      PPL `values(field)` shard-side exact distinct collection. Normalizes
+      Utf8View inputs to the declared List<Utf8> state representation.
     impls:
       - args:
           - name: x

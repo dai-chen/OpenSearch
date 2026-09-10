@@ -13,7 +13,9 @@ import org.opensearch.analytics.spi.DataTransferCapability;
 import org.opensearch.analytics.spi.ExchangeSinkProvider;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Utility logic that operates on {@link CapabilityRegistry} results.
@@ -74,6 +76,54 @@ public final class CapabilityResolutionUtils {
         }
         if (result.isEmpty()) {
             throw new IllegalStateException("No viable backend supports hash-shuffle producer among " + viableBackends);
+        }
+        return result;
+    }
+
+    /**
+     * Resolves coordinator/worker backends that can consume the transfer format emitted by
+     * the selected shuffle producers. Producer and consumer backend IDs may differ, as with
+     * Lucene doc-values producing Arrow IPC for a DataFusion worker stage.
+     */
+    public static List<String> filterByCompatibleShuffleConsumer(
+        CapabilityRegistry registry,
+        List<String> producerBackends,
+        List<String> viableConsumers
+    ) {
+        Set<String> producerFormats = new HashSet<>();
+        for (String name : producerBackends) {
+            registry.getBackend(name)
+                .getCapabilityProvider()
+                .dataTransferCapabilities()
+                .stream()
+                .filter(capability -> capability.kind() == DataTransferCapability.Kind.PRODUCER)
+                .map(DataTransferCapability::format)
+                .forEach(producerFormats::add);
+        }
+
+        List<String> result = new ArrayList<>();
+        for (String name : viableConsumers) {
+            boolean canConsume = registry.getBackend(name)
+                .getCapabilityProvider()
+                .dataTransferCapabilities()
+                .stream()
+                .anyMatch(
+                    capability -> capability.kind() == DataTransferCapability.Kind.CONSUMER
+                        && producerFormats.contains(capability.format())
+                );
+            if (canConsume) {
+                result.add(name);
+            }
+        }
+        if (result.isEmpty()) {
+            throw new IllegalStateException(
+                "No viable shuffle consumer among "
+                    + viableConsumers
+                    + " accepts producer formats "
+                    + producerFormats
+                    + " from "
+                    + producerBackends
+            );
         }
         return result;
     }
