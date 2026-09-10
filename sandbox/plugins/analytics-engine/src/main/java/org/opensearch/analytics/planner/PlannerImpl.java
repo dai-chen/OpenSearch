@@ -62,6 +62,7 @@ import org.opensearch.analytics.planner.rules.OpenSearchUnionSplitRule;
 import org.opensearch.analytics.planner.rules.OpenSearchValuesCharNormalizeRule;
 import org.opensearch.analytics.planner.rules.OpenSearchValuesRule;
 import org.opensearch.analytics.planner.rules.OpenSearchWindowGroupLimitRewriter;
+import org.opensearch.analytics.planner.rules.OpenSearchWindowInputProjectSplitRule;
 
 import java.util.List;
 import java.util.Optional;
@@ -137,6 +138,7 @@ public class PlannerImpl {
         modifiedRelNode = reorderJoins(modifiedRelNode, context, listener);
         modifiedRelNode = mark(modifiedRelNode, context, listener);
         RelNodeUtils.logPlan(LOGGER, "After marking", modifiedRelNode);
+        modifiedRelNode = splitWindowInputProject(modifiedRelNode, listener);
         modifiedRelNode = splitAggLiteralArgProject(modifiedRelNode, listener);
         // TODO(combine-delegated-predicates): a post-marking HEP rule should fuse same-backend
         // AND-sibling AnnotatedPredicates into one combined predicate per group, collapsing N
@@ -382,6 +384,17 @@ public class PlannerImpl {
      */
     private static RelNode splitAggLiteralArgProject(RelNode input, RuleProfilingListener listener) {
         return HepPhase.named("agg-literal-arg-split").addRuleInstance(new OpenSearchAggLiteralArgProjectSplitRule()).run(input, listener);
+    }
+
+    /**
+     * Phase 1c': narrow the scan-side input of a window project before CBO inserts its gather.
+     * The upper project keeps the window at the coordinator; the lower pass-through project
+     * stays with the scan and limits the columns crossing the exchange.
+     */
+    private static RelNode splitWindowInputProject(RelNode input, RuleProfilingListener listener) {
+        return HepPhase.named("window-input-project-split")
+            .addRuleInstance(new OpenSearchWindowInputProjectSplitRule())
+            .run(input, listener);
     }
 
     /**

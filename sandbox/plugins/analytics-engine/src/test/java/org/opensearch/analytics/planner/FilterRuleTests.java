@@ -652,6 +652,44 @@ public class FilterRuleTests extends BasePlannerRulesTests {
         assertNotNull("Planner must produce a plan for HAVING on derived column", result);
     }
 
+    /**
+     * A predicate mixing an aggregate group key with an aggregate result runs against the
+     * aggregate's in-memory output. The group key must not be narrowed back to its scan format
+     * while the derived result is narrowed to the aggregate backend.
+     */
+    public void testFilterComparingPassThroughAndDerivedColumnsPlansSuccessfully() {
+        PlannerContext context = buildContext("parquet", 1, Map.of("status", Map.of("type", "integer"), "size", Map.of("type", "integer")));
+
+        RelOptTable table = mockTable("test_index", "status", "size");
+        RelNode scan = stubScan(table);
+        LogicalAggregate aggregate = LogicalAggregate.create(
+            scan,
+            List.of(),
+            ImmutableBitSet.of(0),
+            null,
+            List.of(
+                AggregateCall.create(
+                    SqlStdOperatorTable.SUM,
+                    false,
+                    List.of(1),
+                    1,
+                    scan,
+                    typeFactory.createSqlType(SqlTypeName.INTEGER),
+                    "total_size"
+                )
+            )
+        );
+
+        RexNode condition = rexBuilder.makeCall(
+            SqlStdOperatorTable.GREATER_THAN,
+            rexBuilder.makeInputRef(typeFactory.createSqlType(SqlTypeName.INTEGER), 0),
+            rexBuilder.makeInputRef(typeFactory.createSqlType(SqlTypeName.INTEGER), 1)
+        );
+
+        RelNode result = runPlanner(LogicalFilter.create(aggregate, condition), context);
+        assertNotNull("Planner must handle a predicate mixing pass-through and derived fields", result);
+    }
+
     // ---- Scalar-function capability narrowing ----
 
     /**

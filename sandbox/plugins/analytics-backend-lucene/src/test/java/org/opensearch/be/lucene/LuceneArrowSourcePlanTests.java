@@ -7,6 +7,7 @@
 
 package org.opensearch.be.lucene;
 
+import com.google.common.collect.ImmutableList;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
 import org.apache.calcite.plan.RelOptCluster;
@@ -15,10 +16,16 @@ import org.apache.calcite.plan.hep.HepProgramBuilder;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.logical.LogicalAggregate;
+import org.apache.calcite.rel.logical.LogicalFilter;
 import org.apache.calcite.rel.logical.LogicalProject;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rex.RexBuilder;
+import org.apache.calcite.rex.RexFieldCollation;
+import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.rex.RexOver;
+import org.apache.calcite.rex.RexWindowBounds;
+import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.ImmutableBitSet;
@@ -35,6 +42,7 @@ import org.opensearch.test.OpenSearchTestCase;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class LuceneArrowSourcePlanTests extends OpenSearchTestCase {
 
@@ -166,6 +174,74 @@ public class LuceneArrowSourcePlanTests extends OpenSearchTestCase {
         assertTrue(LuceneFragmentPlanner.classify(project) instanceof LuceneFragmentPlanner.UnsupportedShape);
     }
 
+    public void testRankLimitedWindowRunsInArrowSourcePlan() {
+        RelDataType keyword = nullable(SqlTypeName.VARCHAR);
+        RelDataType bigint = nullable(SqlTypeName.BIGINT);
+        RelNode scan = scan(
+            typeFactory.builder().add("service", keyword).add("latency", bigint).build(),
+            List.of(storage("service", FieldType.KEYWORD), storage("latency", FieldType.LONG))
+        );
+        RelNode sourceFilter = LogicalFilter.create(
+            scan,
+            rexBuilder.makeCall(SqlStdOperatorTable.IS_NOT_NULL, rexBuilder.makeInputRef(scan, 0))
+        );
+        RexNode rowNumber = rexBuilder.makeOver(
+            typeFactory.createSqlType(SqlTypeName.BIGINT),
+            (SqlAggFunction) SqlStdOperatorTable.ROW_NUMBER,
+            List.of(),
+            ImmutableList.of(rexBuilder.makeInputRef(sourceFilter, 0)),
+            ImmutableList.of(new RexFieldCollation(rexBuilder.makeInputRef(sourceFilter, 1), Set.of())),
+            RexWindowBounds.UNBOUNDED_PRECEDING,
+            RexWindowBounds.CURRENT_ROW,
+            true,
+            true,
+            false,
+            false,
+            false
+        );
+        RelNode windowProject = LogicalProject.create(
+            sourceFilter,
+            List.of(),
+            List.of(rexBuilder.makeInputRef(sourceFilter, 0), rexBuilder.makeInputRef(sourceFilter, 1), rowNumber),
+            List.of("service", "latency", "$local_rank")
+        );
+        // OpenSearchProject.stripAnnotations lifts the RexOver and leaves an outer projection.
+        RelNode liftedWindowProject = LogicalProject.create(
+            windowProject,
+            List.of(),
+            List.of(
+                rexBuilder.makeInputRef(windowProject, 0),
+                rexBuilder.makeInputRef(windowProject, 1),
+                rexBuilder.makeInputRef(windowProject, 2)
+            ),
+            List.of("service", "latency", "_local_rank_")
+        );
+        RelNode rankFilter = LogicalFilter.create(
+            liftedWindowProject,
+            rexBuilder.makeCall(
+                SqlStdOperatorTable.LESS_THAN_OR_EQUAL,
+                rexBuilder.makeInputRef(liftedWindowProject, 2),
+                rexBuilder.makeExactLiteral(java.math.BigDecimal.ONE)
+            )
+        );
+        RelNode stripRank = LogicalProject.create(
+            rankFilter,
+            List.of(),
+            List.of(rexBuilder.makeInputRef(rankFilter, 0), rexBuilder.makeInputRef(rankFilter, 1)),
+            List.of("service", "latency")
+        );
+
+        LuceneFragmentPlanner.ArrowSourceShape shape = arrowSourceShape(stripRank);
+
+        assertSame("only the source predicate is delegated to Lucene", sourceFilter, shape.filter());
+        assertEquals(List.of("service", "latency"), shape.inputColumns().stream().map(ArrowBatchSourceFactory.InputColumn::name).toList());
+        assertTrue("the local window must remain in the DataFusion plan", containsRexOver(shape.rebasedFragment()));
+        assertTrue(
+            "the local rank filter must remain in the DataFusion plan",
+            shape.rebasedFragment().getInput(0) instanceof LogicalFilter
+        );
+    }
+
     public void testAttachedOperatorUpdatesCompiledPlanAndOutputNames() throws Exception {
         RelDataType bigint = nullable(SqlTypeName.BIGINT);
         RelNode scan = scan(typeFactory.builder().add("metric", bigint).build(), List.of(storage("metric", FieldType.LONG)));
@@ -229,6 +305,22 @@ public class LuceneArrowSourcePlanTests extends OpenSearchTestCase {
 
     private RelDataType nullable(SqlTypeName type) {
         return typeFactory.createTypeWithNullability(typeFactory.createSqlType(type), true);
+    }
+
+    private static boolean containsRexOver(RelNode node) {
+        if (node instanceof LogicalProject project) {
+            for (RexNode expression : project.getProjects()) {
+                if (RexOver.containsOver(expression)) {
+                    return true;
+                }
+            }
+        }
+        for (RelNode input : node.getInputs()) {
+            if (containsRexOver(input)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static final class RecordingBackend implements AnalyticsSearchBackendPlugin {

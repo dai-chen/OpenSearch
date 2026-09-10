@@ -264,19 +264,21 @@ public class OpenSearchFilterRule extends RelOptRule {
         }
 
         Set<String> viableSet = new HashSet<>(registry.filterCapableBackends());
+        boolean evaluatesInMemory = fieldIndices.stream()
+            .map(i -> FieldStorageInfo.resolve(fieldStorageInfos, i))
+            .anyMatch(FieldStorageInfo::isDerived);
 
         for (int fieldIndex : fieldIndices) {
             FieldStorageInfo storageInfo = FieldStorageInfo.resolve(fieldStorageInfos, fieldIndex);
 
             Set<String> fieldViable;
-            if (storageInfo.isDerived()) {
+            if (evaluatesInMemory) {
                 // Derived columns (post-Aggregate, post-Join, post-Union, post-Project) are
-                // computed in memory by the producer. The filter can only run on a backend
-                // the producer is also viable for (its child's viableBackends), and further
-                // only on backends that support this function on the field's logical type —
-                // delegation isn't applicable because there's no physical storage to delegate
-                // a scan against. Surfaced by testHavingFilterAfterJoin_multiShard etc., where
-                // a HAVING clause filters on a stats-derived column.
+                // computed in memory by the producer. If one operand is derived, the whole
+                // predicate runs on the producer's output batch, so pass-through operands are
+                // in memory too and must not be narrowed back to their original scan format.
+                // The filter can only run on a backend the producer is viable for and that
+                // supports this function on each operand's logical type.
                 fieldViable = new HashSet<>(childViableBackends);
                 fieldViable.retainAll(registry.filterBackendsAnyFormat(function, storageInfo.getFieldType()));
             } else {

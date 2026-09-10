@@ -23,7 +23,6 @@ import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlAggFunction;
-import org.apache.calcite.sql.type.SqlTypeFamily;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.opensearch.analytics.planner.CapabilityResolutionUtils;
 import org.opensearch.analytics.planner.PlannerContext;
@@ -68,7 +67,7 @@ public class OpenSearchAggregateSplitRule extends RelOptRule {
      * alternative (so the planner can route shard input through a coordinator gather), but
      * skips the PARTIAL+ER+FINAL alternative.
      *
-     * <p>Two cases are unsafe today:
+     * <p>Two aggregate-call families are unsafe today:
      * <ul>
      *   <li><b>percentile_approx</b> is a 2-arg aggregate (field, percent) whose FINAL phase
      *       needs (tdigest_state, percent_literal). {@code AggregateDecompositionResolver}'s
@@ -76,31 +75,18 @@ public class OpenSearchAggregateSplitRule extends RelOptRule {
      *       {@code "Type mismatch: rel rowtype: RecordType(BIGINT p50, BIGINT p50_0) NOT NULL,
      *       equiv rowtype: RecordType(INTEGER bucket, BIGINT p50)"}. Other aggCalls in the
      *       same Aggregate (SUM, AVG, etc.) inherit the single-stage execution.</li>
-     *   <li><b>Cross-family non-prefix groupSet</b>: PARTIAL's output places group keys at
-     *       positions {@code [0..groupCount)}. FINAL reuses ORIGINAL's groupSet against
-     *       PARTIAL's output. When an input column at index {@code k >= groupCount} is a group
-     *       key (e.g. {@code groupSet={2}, groupCount=1}), PARTIAL's output at index {@code k}
-     *       is an agg-result instead, and Calcite's row-type equivalence check fires only if
-     *       that agg-result's {@link SqlTypeFamily} differs from the ORIGINAL input column's
-     *       family. PPL {@code timechart}'s no-{@code by} form trips this: the Project below
-     *       the Aggregate keeps the raw {@code @timestamp} (DATETIME family) at position 0
-     *       and materializes {@code SPAN(@timestamp)} at a later position; the agg result at
-     *       that later position is {@code DOUBLE} (NUMERIC family) → cross-family mismatch
-     *       ({@code "Type mismatch ... DOUBLE -> TIMESTAMP(0)"}). Same-family non-prefix
-     *       cases (e.g. {@code group={1}} with both columns INTEGER + a NUMERIC agg) pass
-     *       Calcite's relaxed numeric type check and don't need the skip — see
-     *       {@code PlanShapeTests.testJoinWithDifferentGroupKeys_multiShard}.</li>
+     *   <li><b>DISTINCT calls</b> that remain after the single-argument distinct-count rewrite
+     *       do not have a valid merge decomposition.</li>
      * </ul>
      *
      * <p>Until {@code AggregateDecompositionResolver} gains engine-native merge support
-     * (percentile_approx) and ORIGINAL→FINAL groupSet remapping (cross-family non-prefix),
-     * the split is conservative in those shapes — distributed parallelism is traded for
-     * correctness.
+     * for the remaining state-expanding and DISTINCT shapes, the split is conservative there.
+     * Non-prefix group sets are safe: {@link OpenSearchAggregate} fronts FINAL's group keys to
+     * the PARTIAL output prefix.
      *
      * <p>Public so the general post-CBO distribution-enforcement pass ({@code DistributionEnforcementPass})
      * shares the same correctness gates as this coord-centric split — both use an identical PARTIAL/FINAL
-     * safety check, so STATE_EXPANDING / DISTINCT / cross-family-non-prefix shapes stay coordinator-centric
-     * in every path.
+     * safety check, so STATE_EXPANDING / DISTINCT shapes stay coordinator-centric in every path.
      */
     public static boolean shouldSkipPartialFinalSplit(OpenSearchAggregate aggregate) {
         for (AggregateCall aggCall : aggregate.getAggCallList()) {
@@ -115,27 +101,6 @@ public class OpenSearchAggregateSplitRule extends RelOptRule {
             // Residual DISTINCT (e.g. multi-arg COUNT(DISTINCT a, b) that didn't match the
             // OpenSearchDistinctCountRule single-arg rewrite) gathers to the coordinator.
             if (aggCall.isDistinct()) {
-                return true;
-            }
-        }
-        int groupCount = aggregate.getGroupSet().cardinality();
-        if (aggregate.getGroupSet().equals(ImmutableBitSet.range(groupCount))) {
-            return false;
-        }
-        // Non-prefix groupSet: a group-key at k >= groupCount lands on PARTIAL's agg-output slot.
-        List<RelDataType> inputFields = aggregate.getInput().getRowType().getFieldList().stream().map(f -> f.getType()).toList();
-        List<AggregateCall> aggCalls = aggregate.getAggCallList();
-        for (int k : aggregate.getGroupSet().toArray()) {
-            if (k < groupCount) {
-                continue;
-            }
-            int aggIdx = k - groupCount;
-            if (aggIdx >= aggCalls.size() || k >= inputFields.size()) {
-                return true;
-            }
-            SqlTypeFamily inputFamily = inputFields.get(k).getSqlTypeName().getFamily();
-            SqlTypeFamily aggFamily = aggCalls.get(aggIdx).getType().getSqlTypeName().getFamily();
-            if (inputFamily != aggFamily) {
                 return true;
             }
         }

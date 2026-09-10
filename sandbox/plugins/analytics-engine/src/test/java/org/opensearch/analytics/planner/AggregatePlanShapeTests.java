@@ -18,6 +18,7 @@ import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.ImmutableBitSet;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Plan-shape tests for {@link org.opensearch.analytics.planner.rel.OpenSearchAggregate}.
@@ -65,6 +66,42 @@ public class AggregatePlanShapeTests extends PlanShapeTestBase {
                 OpenSearchAggregate(group=[{0}], total_status=[SUM($1)], mode=[FINAL], viableBackends=[[mock-parquet]])
                   OpenSearchExchangeReducer(viableBackends=[[mock-parquet]], exchange=[ExchangeInfo[distributionType=SINGLETON, partitionKeyIndices=[], partitionCount=0]])
                     OpenSearchAggregate(group=[{1}], total_status=[SUM($0)], mode=[PARTIAL], viableBackends=[[mock-parquet]])
+                      OpenSearchTableScan(table=[[test_index]], viableBackends=[[mock-parquet]])
+                """,
+            result
+        );
+    }
+
+    public void testCrossFamilyNonPrefixGroupSet_2shard() {
+        RelNode scan = stubScan(
+            mockTable(
+                "test_index",
+                new String[] { "service", "metric", "hour" },
+                new SqlTypeName[] { SqlTypeName.INTEGER, SqlTypeName.BIGINT, SqlTypeName.TIMESTAMP }
+            )
+        );
+        AggregateCall sum = AggregateCall.create(
+            SqlStdOperatorTable.SUM,
+            false,
+            List.of(1),
+            -1,
+            scan,
+            typeFactory.createSqlType(SqlTypeName.BIGINT),
+            "total_metric"
+        );
+        RelNode result = runPlanner(
+            makeAggregate(scan, ImmutableBitSet.of(0, 2), sum),
+            buildContext(
+                "parquet",
+                2,
+                Map.of("service", Map.of("type", "integer"), "metric", Map.of("type", "long"), "hour", Map.of("type", "date"))
+            )
+        );
+        assertPlanShape(
+            """
+                OpenSearchAggregate(group=[{0, 1}], total_metric=[SUM($2)], mode=[FINAL], viableBackends=[[mock-parquet]])
+                  OpenSearchExchangeReducer(viableBackends=[[mock-parquet]], exchange=[ExchangeInfo[distributionType=SINGLETON, partitionKeyIndices=[], partitionCount=0]])
+                    OpenSearchAggregate(group=[{0, 2}], total_metric=[SUM($1)], mode=[PARTIAL], viableBackends=[[mock-parquet]])
                       OpenSearchTableScan(table=[[test_index]], viableBackends=[[mock-parquet]])
                 """,
             result
