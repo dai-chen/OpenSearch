@@ -247,11 +247,6 @@ final class LuceneFragmentPlanner {
     }
 
     private static ArrowSourceShape extractRowArrowSourceShape(RelNode fragment) {
-        ArrowSourceShape rankLimitedWindow = extractRankLimitedWindowShape(fragment);
-        if (rankLimitedWindow != null) {
-            return rankLimitedWindow;
-        }
-
         Project topProject = null;
         RelNode node = fragment;
         if (node instanceof Project candidate) {
@@ -365,89 +360,6 @@ final class LuceneFragmentPlanner {
             rebased = LogicalProject.create(rebased, topProject.getHints(), expressions, topProject.getRowType().getFieldNames());
         }
         return new ArrowSourceShape(SOURCE_INPUT_ID, rebased, input.columns(), filter, resultNames(fragment));
-    }
-
-    /**
-     * Recognizes the shard-side pre-reduction inserted for {@code dedup N key}:
-     *
-     * <pre>
-     * Project(drop local rank)
-     *   Filter(local rank &lt;= N)
-     *     Project(s) containing the local rank window
-     *       [Filter(source predicate)]
-     *         scan
-     * </pre>
-     *
-     * <p>The source predicate remains a Lucene query. The rank window and rank filter stay in the
-     * rebased Arrow-source plan and are executed by the bound backend (DataFusion).
-     */
-    private static ArrowSourceShape extractRankLimitedWindowShape(RelNode fragment) {
-        if (!(fragment instanceof Project topProject) || !(topProject.getInput() instanceof Filter rankFilter)) {
-            return null;
-        }
-
-        RelNode node = rankFilter.getInput();
-        List<Project> windowProjects = new ArrayList<>();
-        boolean containsWindow = false;
-        while (node instanceof Project project) {
-            windowProjects.add(project);
-            for (RexNode expression : project.getProjects()) {
-                containsWindow |= org.apache.calcite.rex.RexOver.containsOver(expression);
-            }
-            node = project.getInput();
-        }
-        if (!containsWindow || windowProjects.isEmpty()) {
-            return null;
-        }
-
-        Filter sourceFilter = null;
-        if (node instanceof Filter candidate) {
-            sourceFilter = candidate;
-            node = candidate.getInput();
-        }
-        if (!(node instanceof OpenSearchRelNode source) || !node.getInputs().isEmpty()) {
-            return null;
-        }
-        List<FieldStorageInfo> storage = source.getOutputFieldStorage();
-        if (storage == null) {
-            return null;
-        }
-
-        // Only the bottom project addresses source columns directly. Every project above it keeps
-        // the same output schema after its child is rebuilt, so its input ordinals remain valid.
-        Project bottomProject = windowProjects.getLast();
-        TreeSet<Integer> referenced = new TreeSet<>();
-        RexShuttle collector = inputReferenceCollector(referenced);
-        for (RexNode expression : bottomProject.getProjects()) {
-            expression.accept(collector);
-        }
-        if (referenced.isEmpty()) {
-            return null;
-        }
-
-        RebasedInput input = rebaseInput(fragment, node, storage, referenced);
-        if (input == null) {
-            return null;
-        }
-
-        RexShuttle remap = inputRemapper(input.oldToNew());
-        RelNode rebased = input.scan();
-        for (int i = windowProjects.size() - 1; i >= 0; i--) {
-            Project project = windowProjects.get(i);
-            List<RexNode> expressions;
-            if (project == bottomProject) {
-                expressions = new ArrayList<>(project.getProjects().size());
-                for (RexNode expression : project.getProjects()) {
-                    expressions.add(expression.accept(remap));
-                }
-            } else {
-                expressions = project.getProjects();
-            }
-            rebased = LogicalProject.create(rebased, project.getHints(), expressions, project.getRowType().getFieldNames());
-        }
-        rebased = rankFilter.copy(rankFilter.getTraitSet(), rebased, rankFilter.getCondition());
-        rebased = topProject.copy(topProject.getTraitSet(), rebased, topProject.getProjects(), topProject.getRowType());
-        return new ArrowSourceShape(SOURCE_INPUT_ID, rebased, input.columns(), sourceFilter, resultNames(fragment));
     }
 
     private static RebasedInput rebaseInput(

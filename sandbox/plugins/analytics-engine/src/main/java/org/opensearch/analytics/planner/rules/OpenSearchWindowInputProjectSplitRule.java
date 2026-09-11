@@ -18,7 +18,9 @@ import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexShuttle;
 import org.opensearch.analytics.planner.RelNodeUtils;
+import org.opensearch.analytics.planner.rel.OpenSearchFilter;
 import org.opensearch.analytics.planner.rel.OpenSearchProject;
+import org.opensearch.analytics.planner.rel.OpenSearchRelNode;
 import org.opensearch.analytics.planner.rel.OpenSearchTableScan;
 
 import java.util.ArrayList;
@@ -29,12 +31,13 @@ import java.util.Set;
 
 /**
  * Duplicates a narrowing pass-through project below a window-bearing project directly over
- * a table scan, so only the window's required columns cross the gather:
+ * a table scan or shard-local filter, so only the window's required columns cross the gather:
  *
  * <pre>
  *   Project(window expressions)       coordinator
  *     ExchangeReducer
  *       Project(required input refs)  shard
+ *         [Filter]
  *         Scan
  * </pre>
  *
@@ -58,7 +61,11 @@ public class OpenSearchWindowInputProjectSplitRule extends RelOptRule {
         }
 
         RelNode child = RelNodeUtils.unwrapHep(project.getInput());
-        if (!(child instanceof OpenSearchTableScan tableScan)) {
+        RelNode source = child;
+        if (child instanceof OpenSearchFilter filter) {
+            source = RelNodeUtils.unwrapHep(filter.getInput());
+        }
+        if (!(source instanceof OpenSearchTableScan) || !(child instanceof OpenSearchRelNode openSearchChild)) {
             return;
         }
 
@@ -99,7 +106,7 @@ public class OpenSearchWindowInputProjectSplitRule extends RelOptRule {
             child,
             lowerExprs,
             lowerRowType,
-            tableScan.getViableBackends()
+            openSearchChild.getViableBackends()
         );
 
         RexShuttle rewriter = new RexShuttle() {
