@@ -68,9 +68,14 @@ public interface AnalyticsSearchBackendPlugin {
     /**
      * Executes a backend-native plan over a caller-provided Arrow batch source.
      * Ownership of {@code sourceFactory} transfers to this method, including on failure.
+     *
+     * @param importStagingAllocator node-scoped and unbounded — result batches are imported onto it
+     *                               and the transport keeps charging it after the returned stream
+     *                               closes, so it must be supplied rather than minted per stream.
      */
     default EngineResultStream executeArrowBatchSource(
         BufferAllocator resultAllocator,
+        BufferAllocator importStagingAllocator,
         ArrowBatchSourcePlan plan,
         ArrowBatchSourceFactory sourceFactory,
         Task task,
@@ -115,6 +120,18 @@ public interface AnalyticsSearchBackendPlugin {
      */
     default ExchangeSinkProvider getExchangeSinkProvider() {
         return null;
+    }
+
+    /**
+     * Returns the sink provider used when this backend drives a hash-shuffle producer.
+     *
+     * <p>Most execution backends use their normal exchange provider for both coordinator
+     * reduction and shuffle production. A scan backend may override this independently when
+     * it emits batches through a bound execution backend but must not advertise itself as a
+     * coordinator-side reducer.
+     */
+    default ExchangeSinkProvider getShuffleSinkProvider() {
+        return getExchangeSinkProvider();
     }
 
     /**

@@ -2181,9 +2181,10 @@ pub unsafe fn sender_send(
 }
 
 /// Conforms a producer batch to the consumer-side `StreamingTable`'s `declared`
-/// schema, but ONLY for the Utf8/Utf8View string-view family — the one divergence
-/// that is a genuine buffer-layout mismatch (offset buffers vs. view buffers) that
-/// crashes downstream operators rebuilding batches against the declared schema.
+/// schema, but ONLY for the Utf8/Utf8View string-view family, including those
+/// strings nested in lists — the one divergence that is a genuine buffer-layout
+/// mismatch (offset buffers vs. view buffers) that crashes downstream operators
+/// rebuilding batches against the declared schema.
 ///
 /// Every other type divergence is left untouched: the column keeps its actual type
 /// and field. This mirrors the pre-conform behavior (the batch flowed through as-is)
@@ -2212,8 +2213,7 @@ fn conform_batch_to_schema(
         .zip(declared.fields().iter())
         .any(|(actual, want)| {
             actual.data_type() != want.data_type()
-                && is_utf8_family(actual.data_type())
-                && is_utf8_family(want.data_type())
+                && is_string_view_conformable(actual.data_type(), want.data_type())
         });
     if !needs_conform {
         return Ok(batch);
@@ -2229,8 +2229,7 @@ fn conform_batch_to_schema(
     for (i, want) in declared.fields().iter().enumerate() {
         let col = batch.column(i);
         if col.data_type() != want.data_type()
-            && is_utf8_family(col.data_type())
-            && is_utf8_family(want.data_type())
+            && is_string_view_conformable(col.data_type(), want.data_type())
         {
             let cast = arrow::compute::cast(col, want.data_type()).map_err(|e| {
                 DataFusionError::Execution(format!(
@@ -2263,6 +2262,21 @@ fn conform_batch_to_schema(
 /// `isUtf8Family` so both sides agree on which divergence is safe to cast.
 fn is_utf8_family(t: &DataType) -> bool {
     matches!(t, DataType::Utf8 | DataType::Utf8View)
+}
+
+/// Whether `actual` can be safely cast to `want` solely by changing Utf8/Utf8View
+/// physical representations. Partial aggregate state such as VALUES crosses a
+/// stage boundary as List<Utf8View>, while Substrait declares List<Utf8>.
+fn is_string_view_conformable(actual: &DataType, want: &DataType) -> bool {
+    if is_utf8_family(actual) && is_utf8_family(want) {
+        return true;
+    }
+    match (actual, want) {
+        (DataType::List(actual_field), DataType::List(want_field)) => {
+            is_string_view_conformable(actual_field.data_type(), want_field.data_type())
+        }
+        _ => false,
+    }
 }
 
 /// Closes a partition stream sender. Dropping the sender closes the mpsc,
@@ -2944,6 +2958,58 @@ mod tests {
         assert_eq!(view.value(2), "c");
         // Non-divergent column is untwiddled.
         assert_eq!(out.column(1).data_type(), &DataType::Int64);
+    }
+
+    #[test]
+    fn conform_batch_casts_list_utf8view_to_declared_list_utf8() {
+        use arrow_array::builder::{ListBuilder, StringViewBuilder};
+        use arrow_array::{ListArray, StringArray};
+        use arrow_schema::{Field, Schema};
+
+        let declared_type =
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true)));
+        let declared: SchemaRef = Arc::new(Schema::new(vec![Field::new(
+            "values",
+            declared_type.clone(),
+            true,
+        )]));
+
+        let mut builder = ListBuilder::new(StringViewBuilder::new());
+        builder.values().append_value("a");
+        builder.values().append_value("b");
+        builder.append(true);
+        builder.append(false);
+        builder.values().append_value("c");
+        builder.append(true);
+        let list = builder.finish();
+        assert_eq!(
+            list.data_type(),
+            &DataType::List(Arc::new(Field::new(
+                "item",
+                DataType::Utf8View,
+                true
+            )))
+        );
+        let batch = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![Field::new(
+                "values",
+                list.data_type().clone(),
+                true,
+            )])),
+            vec![Arc::new(list)],
+        )
+        .unwrap();
+
+        let out = super::conform_batch_to_schema(batch, &declared).unwrap();
+        assert_eq!(out.schema().as_ref(), declared.as_ref());
+        assert_eq!(out.column(0).data_type(), &declared_type);
+        let list = out.column(0).as_any().downcast_ref::<ListArray>().unwrap();
+        let values = list.values();
+        let strings = values.as_any().downcast_ref::<StringArray>().unwrap();
+        assert_eq!(strings.value(0), "a");
+        assert_eq!(strings.value(1), "b");
+        assert_eq!(strings.value(2), "c");
+        assert!(list.is_null(1));
     }
 
     #[test]

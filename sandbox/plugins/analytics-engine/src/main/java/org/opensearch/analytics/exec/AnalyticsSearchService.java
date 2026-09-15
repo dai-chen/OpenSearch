@@ -35,6 +35,7 @@ import org.opensearch.analytics.spi.DelegationDescriptor;
 import org.opensearch.analytics.spi.DelegationThreadTracker;
 import org.opensearch.analytics.spi.ExchangeSink;
 import org.opensearch.analytics.spi.ExchangeSinkContext;
+import org.opensearch.analytics.spi.ExchangeSinkProvider;
 import org.opensearch.analytics.spi.FilterDelegationHandle;
 import org.opensearch.analytics.spi.FragmentInstructionHandler;
 import org.opensearch.analytics.spi.FragmentInstructionHandlerFactory;
@@ -955,14 +956,17 @@ public class AnalyticsSearchService implements AutoCloseable {
             /* downstream */ null,
             importStagingAllocator
         );
-        return backend.getExchangeSinkProvider()
-            .createPartitionedSink(
-                producerState.getHashKeyChannels(),
-                producerState.getPartitionCount(),
-                producerState.getTargetWorkerNodeIds(),
-                sender,
-                sinkCtx
-            );
+        ExchangeSinkProvider sinkProvider = backend.getShuffleSinkProvider();
+        if (sinkProvider == null) {
+            throw new IllegalStateException("Backend [" + backend.name() + "] has no hash-shuffle sink provider");
+        }
+        return sinkProvider.createPartitionedSink(
+            producerState.getHashKeyChannels(),
+            producerState.getPartitionCount(),
+            producerState.getTargetWorkerNodeIds(),
+            sender,
+            sinkCtx
+        );
     }
 
     /**

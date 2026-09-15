@@ -37,6 +37,26 @@ public final class AnalyticsSettings {
      * enable it explicitly (see {@code qa/analytics-engine-rest/build.gradle}) so the MPP path is
      * exercised in CI.
      */
+    /**
+     * Maximum rows the coordinator's terminal row-collecting sink will buffer for one query.
+     *
+     * <p>Implements the TODO on {@code RowProducingSink#DEFAULT_MAX_ROWS}. The sink checks the cap
+     * BEFORE adding a batch, so it accepts the batch that crosses the limit in full and then
+     * silently drops every later batch — whole batches, no error and no warning. Because groups are
+     * contiguous after a sort, that presents as entire groups missing from an otherwise correct
+     * result, and the count varies with batch boundaries.
+     *
+     * <p>Set to {@code Long.MAX_VALUE} to disable. Raising it trades coordinator heap for
+     * completeness: every buffered batch is held until the query finishes.
+     */
+    public static final Setting<Long> COORDINATOR_MAX_RESULT_ROWS = Setting.longSetting(
+        "analytics.coordinator.max_result_rows",
+        10_000L,
+        1L,
+        Setting.Property.NodeScope,
+        Setting.Property.Dynamic
+    );
+
     public static final Setting<Boolean> MPP_ENABLED = Setting.boolSetting(
         "analytics.mpp.enabled",
         false,
@@ -362,6 +382,7 @@ public final class AnalyticsSettings {
 
     /** All engine-level settings registered by {@code AnalyticsPlugin.getSettings()}. */
     public static final List<Setting<?>> ALL_SETTINGS = List.of(
+        COORDINATOR_MAX_RESULT_ROWS,
         MPP_ENABLED,
         BROADCAST_MAX_BYTES,
         MPP_SHUFFLE_PARTITIONS,

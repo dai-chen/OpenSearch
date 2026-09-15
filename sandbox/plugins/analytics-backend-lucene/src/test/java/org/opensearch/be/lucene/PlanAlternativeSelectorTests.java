@@ -185,6 +185,45 @@ public class PlanAlternativeSelectorTests extends OpenSearchTestCase {
         assertEquals("mock-parquet", alternatives.getFirst().backendId());
     }
 
+    public void testSumOverLongWithoutDocValuesHasNoViableBackend() {
+        TableScan scan = scanOver("metric", SqlTypeName.BIGINT);
+        AggregateCall sum = AggregateCall.create(
+            SqlStdOperatorTable.SUM,
+            false,
+            List.of(0),
+            -1,
+            scan,
+            typeFactory.createTypeWithNullability(typeFactory.createSqlType(SqlTypeName.BIGINT), true),
+            "sum_metric"
+        );
+        Map<String, Map<String, Object>> mappings = Map.of("metric", Map.of("type", "long", "doc_values", false));
+
+        IllegalStateException failure = expectThrows(
+            IllegalStateException.class,
+            () -> forkAndSelect(aggregate(scan, sum), mappings, true, "lucene")
+        );
+        assertTrue(failure.getMessage(), failure.getMessage().contains("No backend can scan all requested fields"));
+    }
+
+    public void testSumOverLongWithParquetPrimaryDoesNotSelectLuceneDocValues() {
+        TableScan scan = scanOver("metric", SqlTypeName.BIGINT);
+        AggregateCall sum = AggregateCall.create(
+            SqlStdOperatorTable.SUM,
+            false,
+            List.of(0),
+            -1,
+            scan,
+            typeFactory.createTypeWithNullability(typeFactory.createSqlType(SqlTypeName.BIGINT), true),
+            "sum_metric"
+        );
+
+        QueryDAG dag = forkAndSelect(aggregate(scan, sum), longMappings(), true, "parquet");
+
+        List<StagePlan> alternatives = leafOf(dag).getPlanAlternatives();
+        assertEquals(1, alternatives.size());
+        assertEquals("mock-parquet", alternatives.getFirst().backendId());
+    }
+
     public void testSumOverLongSelectsLuceneArrowSource() {
         TableScan scan = scanOver("metric", SqlTypeName.BIGINT);
         AggregateCall sum = AggregateCall.create(
@@ -283,6 +322,38 @@ public class PlanAlternativeSelectorTests extends OpenSearchTestCase {
         List<StagePlan> alternatives = leafOf(dag).getPlanAlternatives();
         assertEquals(1, alternatives.size());
         assertEquals("lucene", alternatives.getFirst().backendId());
+    }
+
+    public void testCountStarWithParquetNumericFilterDoesNotSelectLucene() {
+        TableScan scan = scanOver(List.of("status", "amount"), List.of(SqlTypeName.VARCHAR, SqlTypeName.BIGINT));
+        RexNode greaterThan = rexBuilder.makeCall(
+            SqlStdOperatorTable.GREATER_THAN,
+            rexBuilder.makeInputRef(typeFactory.createSqlType(SqlTypeName.BIGINT), 1),
+            rexBuilder.makeExactLiteral(java.math.BigDecimal.valueOf(50))
+        );
+        RelNode plan = aggregate(LogicalFilter.create(scan, greaterThan), countStar(scan));
+        Map<String, Map<String, Object>> mappings = Map.of("status", Map.of("type", "keyword"), "amount", Map.of("type", "long"));
+
+        QueryDAG dag = forkAndSelect(plan, mappings, true);
+
+        List<StagePlan> alternatives = leafOf(dag).getPlanAlternatives();
+        assertEquals(1, alternatives.size());
+        assertEquals("mock-parquet", alternatives.getFirst().backendId());
+    }
+
+    public void testHavingOnDerivedCountDoesNotDelegateToLucene() {
+        TableScan scan = scanOver("status", SqlTypeName.VARCHAR);
+        RelNode groupedCount = LogicalAggregate.create(scan, ImmutableBitSet.of(0), null, List.of(countStar(scan)));
+        RexNode greaterThan = rexBuilder.makeCall(
+            SqlStdOperatorTable.GREATER_THAN,
+            rexBuilder.makeInputRef(typeFactory.createSqlType(SqlTypeName.BIGINT), 1),
+            rexBuilder.makeBigintLiteral(java.math.BigDecimal.TEN)
+        );
+
+        QueryDAG dag = forkAndSelect(LogicalFilter.create(groupedCount, greaterThan), keywordMappings(), true, "parquet", true);
+
+        assertEquals("mock-parquet", leafOf(dag).getPlanAlternatives().getFirst().backendId());
+        assertNoDelegatedExpressions(dag.rootStage());
     }
 
     /**
@@ -391,6 +462,13 @@ public class PlanAlternativeSelectorTests extends OpenSearchTestCase {
             stage = stage.getChildStages().getFirst();
         }
         return stage;
+    }
+
+    private static void assertNoDelegatedExpressions(Stage stage) {
+        for (StagePlan plan : stage.getPlanAlternatives()) {
+            assertTrue(plan.delegatedExpressions().isEmpty());
+        }
+        stage.getChildStages().forEach(PlanAlternativeSelectorTests::assertNoDelegatedExpressions);
     }
 
     // ---- Calcite helpers ----

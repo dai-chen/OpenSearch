@@ -83,6 +83,12 @@ final class LuceneSearchExecEngine implements SearchExecEngine<ShardScanExecutio
             if (arrowSourceBackend == null) {
                 throw new IllegalStateException("No Arrow batch source execution backend is available");
             }
+            // Node-scoped and unbounded — result batches are imported onto it and the Flight transport
+            // keeps charging it after the returned stream closes, so it must be supplied, not minted here.
+            BufferAllocator arrowSourceStagingAllocator = context.getImportStagingAllocator();
+            if (arrowSourceStagingAllocator == null) {
+                throw new IllegalStateException("ExecutionContext.importStagingAllocator must be set by the caller before execute()");
+            }
             DocValuesBatchSourceFactory sourceFactory = new DocValuesBatchSourceFactory(
                 state.searcher(),
                 state.filterQuery(),
@@ -92,6 +98,7 @@ final class LuceneSearchExecEngine implements SearchExecEngine<ShardScanExecutio
             );
             return arrowSourceBackend.executeArrowBatchSource(
                 allocator,
+                arrowSourceStagingAllocator,
                 sourcePlan,
                 sourceFactory,
                 context.getTask(),

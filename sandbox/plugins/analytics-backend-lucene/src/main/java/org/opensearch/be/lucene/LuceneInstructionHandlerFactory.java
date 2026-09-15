@@ -8,6 +8,7 @@
 
 package org.opensearch.be.lucene;
 
+import org.opensearch.analytics.spi.AnalyticsSearchBackendPlugin;
 import org.opensearch.analytics.spi.DelegatedExpression;
 import org.opensearch.analytics.spi.FilterTreeShape;
 import org.opensearch.analytics.spi.FragmentInstructionHandler;
@@ -15,6 +16,7 @@ import org.opensearch.analytics.spi.FragmentInstructionHandlerFactory;
 import org.opensearch.analytics.spi.InstructionNode;
 import org.opensearch.analytics.spi.ShardScanInstructionNode;
 import org.opensearch.analytics.spi.ShardScanWithDelegationInstructionNode;
+import org.opensearch.analytics.spi.ShuffleProducerInstructionNode;
 
 import java.util.List;
 import java.util.Optional;
@@ -34,9 +36,11 @@ import java.util.Optional;
 final class LuceneInstructionHandlerFactory implements FragmentInstructionHandlerFactory {
 
     private final LucenePlugin plugin;
+    private final AnalyticsSearchBackendPlugin arrowSourceBackend;
 
-    LuceneInstructionHandlerFactory(LucenePlugin plugin) {
+    LuceneInstructionHandlerFactory(LucenePlugin plugin, AnalyticsSearchBackendPlugin arrowSourceBackend) {
         this.plugin = plugin;
+        this.arrowSourceBackend = arrowSourceBackend;
     }
 
     // ── Coordinator-side: produce instruction nodes ──
@@ -97,6 +101,12 @@ final class LuceneInstructionHandlerFactory implements FragmentInstructionHandle
         }
         if (node instanceof ShardScanInstructionNode) {
             return (FragmentInstructionHandler) new LuceneScanInstructionHandler(plugin);
+        }
+        if (node instanceof ShuffleProducerInstructionNode) {
+            if (arrowSourceBackend == null) {
+                throw new IllegalStateException("No Arrow batch source execution backend is available for hash shuffle");
+            }
+            return arrowSourceBackend.getInstructionHandlerFactory().createHandler(node);
         }
         throw new UnsupportedOperationException("Lucene driver does not handle instruction type: " + node.type());
     }

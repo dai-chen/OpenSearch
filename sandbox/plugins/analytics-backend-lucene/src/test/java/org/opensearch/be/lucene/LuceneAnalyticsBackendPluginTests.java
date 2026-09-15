@@ -46,6 +46,7 @@ import org.opensearch.analytics.planner.dag.Stage;
 import org.opensearch.analytics.planner.dag.StagePlan;
 import org.opensearch.analytics.spi.AnalyticsSearchBackendPlugin;
 import org.opensearch.analytics.spi.BackendCapabilityProvider;
+import org.opensearch.analytics.spi.DataTransferCapability;
 import org.opensearch.analytics.spi.DelegatedExpression;
 import org.opensearch.analytics.spi.DelegationType;
 import org.opensearch.analytics.spi.EngineCapability;
@@ -62,6 +63,7 @@ import org.opensearch.analytics.spi.ScalarFunction;
 import org.opensearch.analytics.spi.ScanCapability;
 import org.opensearch.analytics.spi.ShardScanInstructionNode;
 import org.opensearch.analytics.spi.ShardScanWithDelegationInstructionNode;
+import org.opensearch.analytics.spi.ShuffleProducerInstructionNode;
 import org.opensearch.cluster.ClusterState;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
@@ -100,6 +102,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -201,6 +204,48 @@ public class LuceneAnalyticsBackendPluginTests extends OpenSearchTestCase {
             expectThrows(IllegalStateException.class, () -> new LuceneAnalyticsBackendPlugin(plugin).acquireReader(shard));
             assertEquals(1, searcherCloses.get());
         }
+    }
+
+    public void testArrowSourceBackendSuppliesShuffleProducerMechanics() {
+        AnalyticsSearchBackendPlugin arrowBackend = mock(AnalyticsSearchBackendPlugin.class);
+        BackendCapabilityProvider capabilities = mock(BackendCapabilityProvider.class);
+        ExchangeSinkProvider sinkProvider = mock(ExchangeSinkProvider.class);
+        FragmentInstructionHandlerFactory handlerFactory = mock(FragmentInstructionHandlerFactory.class);
+        FragmentInstructionHandler<?> handler = mock(FragmentInstructionHandler.class);
+        ClusterState state = mock(ClusterState.class);
+        ShuffleProducerInstructionNode instruction = new ShuffleProducerInstructionNode(
+            List.of(0),
+            3,
+            List.of("node-1", "node-2", "node-3"),
+            "query",
+            7,
+            "left"
+        );
+
+        when(arrowBackend.supportsArrowBatchSourceExecution()).thenReturn(true);
+        when(arrowBackend.getCapabilityProvider()).thenReturn(capabilities);
+        when(capabilities.dataTransferCapabilities()).thenReturn(
+            Set.of(
+                new DataTransferCapability(DataTransferCapability.Kind.PRODUCER, "arrow-ipc-partitioned"),
+                new DataTransferCapability(DataTransferCapability.Kind.CONSUMER, "arrow-ipc-partitioned")
+            )
+        );
+        when(arrowBackend.getShuffleSinkProvider()).thenReturn(sinkProvider);
+        when(arrowBackend.defaultShuffleParallelism(state)).thenReturn(3);
+        when(arrowBackend.getInstructionHandlerFactory()).thenReturn(handlerFactory);
+        doReturn(handler).when(handlerFactory).createHandler(instruction);
+
+        LuceneAnalyticsBackendPlugin lucene = new LuceneAnalyticsBackendPlugin(mock(LucenePlugin.class));
+        lucene.bindBackends(Map.of("arrow", arrowBackend));
+
+        assertEquals(
+            Set.of(new DataTransferCapability(DataTransferCapability.Kind.PRODUCER, "arrow-ipc-partitioned")),
+            lucene.getCapabilityProvider().dataTransferCapabilities()
+        );
+        assertSame(sinkProvider, lucene.getShuffleSinkProvider());
+        assertEquals(3, lucene.defaultShuffleParallelism(state));
+        assertSame(handler, lucene.getInstructionHandlerFactory().createHandler(instruction));
+        assertNull("Lucene must not become a coordinator-reduce backend", lucene.getExchangeSinkProvider());
     }
 
     /**

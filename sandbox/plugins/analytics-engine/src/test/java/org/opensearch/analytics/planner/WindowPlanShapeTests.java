@@ -81,6 +81,72 @@ public class WindowPlanShapeTests extends PlanShapeTestBase {
         );
     }
 
+    public void testWindowInputProjectionPushesBelowGather_2shard() {
+        RelOptTable table = mockTable("test_index", "status", "size");
+        RelNode scan = stubScan(table);
+        RexBuilder rb = scan.getCluster().getRexBuilder();
+        RexNode count = makeOver(
+            rb,
+            scan,
+            SqlStdOperatorTable.COUNT,
+            List.of(),
+            SqlTypeName.BIGINT,
+            RexWindowBounds.UNBOUNDED_PRECEDING,
+            RexWindowBounds.UNBOUNDED_FOLLOWING
+        );
+        RelNode plan = LogicalProject.create(
+            scan,
+            List.of(),
+            List.of(rb.makeInputRef(scan, 0), count),
+            List.of("status", "cnt")
+        );
+
+        RelNode result = runPlanner(plan, multiShardContext());
+        assertPlanShape(
+            """
+                OpenSearchProject(status=[$0], cnt=[COUNT() OVER ()], viableBackends=[[mock-parquet]])
+                  OpenSearchExchangeReducer(viableBackends=[[mock-parquet]], exchange=[ExchangeInfo[distributionType=SINGLETON, partitionKeyIndices=[], partitionCount=0]])
+                    OpenSearchProject(status=[$0], viableBackends=[[mock-parquet]])
+                      OpenSearchTableScan(table=[[test_index]], viableBackends=[[mock-parquet]])
+                """,
+            result
+        );
+    }
+
+    public void testWindowInputProjectionKeepsFilterBelowGather_2shard() {
+        RelOptTable table = mockTable("test_index", "status", "size");
+        RelNode scan = stubScan(table);
+        RelNode filter = makeFilter(scan, makeEquals(1, SqlTypeName.INTEGER, 100));
+        RexBuilder rb = scan.getCluster().getRexBuilder();
+        RexNode count = makeOver(
+            rb,
+            filter,
+            SqlStdOperatorTable.COUNT,
+            List.of(),
+            SqlTypeName.BIGINT,
+            RexWindowBounds.UNBOUNDED_PRECEDING,
+            RexWindowBounds.UNBOUNDED_FOLLOWING
+        );
+        RelNode plan = LogicalProject.create(
+            filter,
+            List.of(),
+            List.of(rb.makeInputRef(filter, 0), count),
+            List.of("status", "cnt")
+        );
+
+        RelNode result = runPlanner(plan, multiShardContext());
+        assertPlanShape(
+            """
+                OpenSearchProject(status=[$0], cnt=[COUNT() OVER ()], viableBackends=[[mock-parquet]])
+                  OpenSearchExchangeReducer(viableBackends=[[mock-parquet]], exchange=[ExchangeInfo[distributionType=SINGLETON, partitionKeyIndices=[], partitionCount=0]])
+                    OpenSearchProject(status=[$0], viableBackends=[[mock-parquet]])
+                      OpenSearchFilter(condition=[ANNOTATED_PREDICATE(id=0, backends=[mock-lucene, mock-parquet], =($1, 100))], viableBackends=[[mock-parquet]])
+                        OpenSearchTableScan(table=[[test_index]], viableBackends=[[mock-parquet]])
+                """,
+            result
+        );
+    }
+
     /**
      * Two aggregates with a global window between them (PPL: {@code stats count() by k | eval
      * w = sum(..) over () | stats ...}). The split rule must treat each aggregate independently:

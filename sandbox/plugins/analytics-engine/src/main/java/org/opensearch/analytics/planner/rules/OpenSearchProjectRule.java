@@ -24,6 +24,7 @@ import org.opensearch.analytics.planner.UnsupportedFunctionException;
 import org.opensearch.analytics.planner.rel.AnnotatedProjectExpression;
 import org.opensearch.analytics.planner.rel.OpenSearchProject;
 import org.opensearch.analytics.planner.rel.OpenSearchRelNode;
+import org.opensearch.analytics.spi.AnalyticsSearchBackendPlugin;
 import org.opensearch.analytics.spi.DelegationType;
 import org.opensearch.analytics.spi.FieldType;
 import org.opensearch.analytics.spi.ScalarFunction;
@@ -310,19 +311,40 @@ public class OpenSearchProjectRule extends RelOptRule {
     private List<String> narrowByWindowCapability(List<String> candidates, Set<WindowFunction> required) {
         List<String> out = new ArrayList<>();
         for (String backend : candidates) {
-            Set<WindowCapability> caps = context.getCapabilityRegistry().getBackend(backend).getCapabilityProvider().windowCapabilities();
-            boolean covers = false;
-            for (WindowCapability cap : caps) {
-                if (cap.functions().containsAll(required)) {
-                    covers = true;
-                    break;
+            if (coversWindowFunctions(backend, required)) out.add(backend);
+        }
+        if (out.isEmpty()) {
+            // A window function cannot be evaluated shard-locally: it needs the full row set for
+            // its partition, so it always lands in a coordinator stage that consumes exchanged
+            // Arrow batches instead of scanning the child's storage format. It is therefore not
+            // bound by the child's viable backends — the same reasoning, and the same widening
+            // shape, as CapabilityResolutionUtils#filterByReduceCapability.
+            //
+            // Without this, a scan-format-restricted child (e.g. a lucene-primary index, whose
+            // viable set is [lucene] alone) makes every window query fail even though DataFusion
+            // declares the function and is the backend that would execute the coordinator stage.
+            for (AnalyticsSearchBackendPlugin backend : context.getCapabilityRegistry().getBackends()) {
+                if (candidates.contains(backend.name()) == false
+                    && backend.getExchangeSinkProvider() != null
+                    && coversWindowFunctions(backend.name(), required)) {
+                    out.add(backend.name());
                 }
             }
-            if (covers) out.add(backend);
         }
         if (out.isEmpty()) {
             throw new UnsupportedFunctionException(required.toString(), "as window functions");
         }
         return out;
+    }
+
+    /** True when any of {@code backend}'s window capabilities covers every required function. */
+    private boolean coversWindowFunctions(String backend, Set<WindowFunction> required) {
+        Set<WindowCapability> caps = context.getCapabilityRegistry().getBackend(backend).getCapabilityProvider().windowCapabilities();
+        for (WindowCapability cap : caps) {
+            if (cap.functions().containsAll(required)) {
+                return true;
+            }
+        }
+        return false;
     }
 }
