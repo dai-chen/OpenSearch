@@ -93,6 +93,7 @@ testClusters {
           systemProperty 'io.netty.noUnsafe', 'false'
           systemProperty 'io.netty.tryUnsafe', 'true'
           systemProperty 'io.netty.tryReflectionSetAccessible', 'true'
+          systemProperty 'opensearch.experimental.feature.transport.stream.enabled', 'true'
         }
         if (p.equals("parquet-data-format") || p.equals("analytics-backend-datafusion")) {
           // Composite engine / DataFusion requires pluggable dataformat feature flag
