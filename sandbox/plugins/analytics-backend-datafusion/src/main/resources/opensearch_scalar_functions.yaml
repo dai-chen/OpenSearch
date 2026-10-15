@@ -1348,3 +1348,103 @@ scalar_functions:
           - name: state
             value: any1
         return: i64
+  - name: "lpad"
+    description: "PoC (dialect=clickhouse): DataFusion native lpad."
+    impls:
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "i32" }
+          - { name: a2, value: "any1" }
+        return: "any1"
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "i64" }
+          - { name: a2, value: "any1" }
+        return: "any1"
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "i32" }
+        return: "any1"
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "i64" }
+        return: "any1"
+
+  - name: "rpad"
+    description: "PoC (dialect=clickhouse): DataFusion native rpad."
+    impls:
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "i32" }
+          - { name: a2, value: "any1" }
+        return: "any1"
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "i64" }
+          - { name: a2, value: "any1" }
+        return: "any1"
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "i32" }
+        return: "any1"
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "i64" }
+        return: "any1"
+
+  - name: "substr_index"
+    description: "PoC (dialect=clickhouse): DataFusion native substr_index."
+    impls:
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "any1" }
+          - { name: a2, value: "i32" }
+        return: "any1"
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "any1" }
+          - { name: a2, value: "i64" }
+        return: "any1"
+
+  - name: "initcap"
+    description: "PoC (dialect=clickhouse): DataFusion native initcap."
+    impls:
+      - args:
+          - { name: a0, value: "any1" }
+        return: "any1"
+
+  - name: "repeat"
+    description: "PoC (dialect=clickhouse): DataFusion native repeat."
+    impls:
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "i32" }
+        return: "any1"
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "i64" }
+        return: "any1"
+
+  - name: "starts_with"
+    description: "PoC (dialect=clickhouse): DataFusion native starts_with."
+    impls:
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "any1" }
+        return: "boolean"
+
+  - name: "ends_with"
+    description: "PoC (dialect=clickhouse): DataFusion native ends_with."
+    impls:
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "any1" }
+        return: "boolean"
+
+  - name: "levenshtein"
+    description: "PoC (dialect=clickhouse): DataFusion native levenshtein."
+    impls:
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "any1" }
+        return: "i32"

@@ -33,6 +33,11 @@ public enum WindowFunction {
     RANK(SqlKind.RANK),
     DENSE_RANK(SqlKind.DENSE_RANK),
     NTH_VALUE(SqlKind.NTH_VALUE),
+    // PoC (dialect=clickhouse): native DataFusion window functions
+    LAG(SqlKind.LAG),
+    LEAD(SqlKind.LEAD),
+    FIRST_VALUE(SqlKind.FIRST_VALUE),
+    LAST_VALUE(SqlKind.LAST_VALUE),
     PATTERN(SqlKind.OTHER);
 
     private final SqlKind sqlKind;

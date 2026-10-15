@@ -350,6 +350,32 @@ public enum ScalarFunction {
     /** PPL {@code YEARWEEK(x[, mode])} — year*100+week (INTEGER) via the os_yearweek Rust UDF. */
     YEARWEEK(Category.SCALAR, SqlKind.OTHER_FUNCTION),
 
+    // ── PoC (dialect=clickhouse): Calcite library operators with same-shape DataFusion natives ──
+    LPAD(Category.STRING, SqlKind.OTHER_FUNCTION),
+    RPAD(Category.STRING, SqlKind.OTHER_FUNCTION),
+    SUBSTRING_INDEX(Category.STRING, SqlKind.OTHER_FUNCTION),
+    INITCAP(Category.STRING, SqlKind.OTHER_FUNCTION),
+    REPEAT(Category.STRING, SqlKind.OTHER_FUNCTION),
+    STARTS_WITH(Category.STRING, SqlKind.OTHER_FUNCTION),
+    ENDS_WITH(Category.STRING, SqlKind.OTHER_FUNCTION),
+    TRANSLATE3(Category.STRING, SqlKind.OTHER_FUNCTION),
+    LEVENSHTEIN(Category.STRING, SqlKind.OTHER_FUNCTION),
+    SPLIT(Category.SCALAR, SqlKind.OTHER_FUNCTION),
+    ARRAY_REPEAT(Category.SCALAR, SqlKind.OTHER_FUNCTION),
+    ARRAY_CONTAINS(Category.SCALAR, SqlKind.OTHER_FUNCTION),
+    ARRAYS_OVERLAP(Category.SCALAR, SqlKind.OTHER_FUNCTION),
+    ARRAY_POSITION(Category.SCALAR, SqlKind.OTHER_FUNCTION),
+    ARRAY_CONCAT(Category.SCALAR, SqlKind.OTHER_FUNCTION),
+    ARRAY_APPEND(Category.SCALAR, SqlKind.OTHER_FUNCTION),
+    ARRAY_PREPEND(Category.SCALAR, SqlKind.OTHER_FUNCTION),
+    ARRAY_REVERSE(Category.SCALAR, SqlKind.OTHER_FUNCTION),
+    SORT_ARRAY(Category.SCALAR, SqlKind.OTHER_FUNCTION),
+    ARRAY_INTERSECT(Category.SCALAR, SqlKind.OTHER_FUNCTION),
+    ARRAY_UNION(Category.SCALAR, SqlKind.OTHER_FUNCTION),
+    ARRAY_REMOVE(Category.SCALAR, SqlKind.OTHER_FUNCTION),
+    ARRAY_MIN(Category.SCALAR, SqlKind.OTHER_FUNCTION),
+    ARRAY_MAX(Category.SCALAR, SqlKind.OTHER_FUNCTION),
+
     // ── JSON ────────────────────────────────────────────────────────
     /** PPL {@code JSON(s)} — validate / round-trip a JSON string; NULL on malformed input. */
     JSON(Category.SCALAR, SqlKind.OTHER_FUNCTION),

@@ -156,3 +156,123 @@ scalar_functions:
           - value: "varchar<L1>"
             name: separator
         return: "string?"
+  - name: "string_to_array"
+    description: "PoC (dialect=clickhouse): DataFusion native string_to_array."
+    impls:
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "any1" }
+        return: "list<any1>"
+
+  - name: "array_repeat"
+    description: "PoC (dialect=clickhouse): DataFusion native array_repeat."
+    impls:
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "i32" }
+        return: "list<any1>"
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "i64" }
+        return: "list<any1>"
+
+  - name: "array_has"
+    description: "PoC (dialect=clickhouse): DataFusion native array_has."
+    impls:
+      - args:
+          - { name: a0, value: "list<any1>" }
+          - { name: a1, value: "any1" }
+        return: "boolean"
+
+  - name: "array_has_any"
+    description: "PoC (dialect=clickhouse): DataFusion native array_has_any."
+    impls:
+      - args:
+          - { name: a0, value: "list<any1>" }
+          - { name: a1, value: "list<any1>" }
+        return: "boolean"
+
+  - name: "array_position"
+    description: "PoC (dialect=clickhouse): DataFusion native array_position."
+    impls:
+      - args:
+          - { name: a0, value: "list<any1>" }
+          - { name: a1, value: "any1" }
+        return: "i64"
+
+  - name: "array_concat"
+    description: "PoC (dialect=clickhouse): DataFusion native array_concat."
+    impls:
+      - args:
+          - { name: a0, value: "list<any1>" }
+        variadic:
+          min: 1
+        return: "list<any1>"
+
+  - name: "array_append"
+    description: "PoC (dialect=clickhouse): DataFusion native array_append."
+    impls:
+      - args:
+          - { name: a0, value: "list<any1>" }
+          - { name: a1, value: "any1" }
+        return: "list<any1>"
+
+  - name: "array_prepend"
+    description: "PoC (dialect=clickhouse): DataFusion native array_prepend."
+    impls:
+      - args:
+          - { name: a0, value: "any1" }
+          - { name: a1, value: "list<any1>" }
+        return: "list<any1>"
+
+  - name: "array_reverse"
+    description: "PoC (dialect=clickhouse): DataFusion native array_reverse."
+    impls:
+      - args:
+          - { name: a0, value: "list<any1>" }
+        return: "list<any1>"
+
+  - name: "array_sort"
+    description: "PoC (dialect=clickhouse): DataFusion native array_sort."
+    impls:
+      - args:
+          - { name: a0, value: "list<any1>" }
+        return: "list<any1>"
+
+  - name: "array_intersect"
+    description: "PoC (dialect=clickhouse): DataFusion native array_intersect."
+    impls:
+      - args:
+          - { name: a0, value: "list<any1>" }
+          - { name: a1, value: "list<any1>" }
+        return: "list<any1>"
+
+  - name: "array_union"
+    description: "PoC (dialect=clickhouse): DataFusion native array_union."
+    impls:
+      - args:
+          - { name: a0, value: "list<any1>" }
+          - { name: a1, value: "list<any1>" }
+        return: "list<any1>"
+
+  - name: "array_remove_all"
+    description: "PoC (dialect=clickhouse): DataFusion native array_remove_all."
+    impls:
+      - args:
+          - { name: a0, value: "list<any1>" }
+          - { name: a1, value: "any1" }
+        return: "list<any1>"
+
+  - name: "array_min"
+    description: "PoC (dialect=clickhouse): DataFusion native array_min."
+    impls:
+      - args:
+          - { name: a0, value: "list<any1>" }
+        return: "any1"
+
+  - name: "array_max"
+    description: "PoC (dialect=clickhouse): DataFusion native array_max."
+    impls:
+      - args:
+          - { name: a0, value: "list<any1>" }
+        return: "any1"

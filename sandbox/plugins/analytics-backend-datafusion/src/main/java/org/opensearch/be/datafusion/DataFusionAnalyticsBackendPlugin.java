@@ -425,7 +425,22 @@ public class DataFusionAnalyticsBackendPlugin implements AnalyticsSearchBackendP
         ScalarFunction.TIME_DIFF,
         // PPL LAST_DAY — date_trunc('month') + 1 month - 1 day. YEARWEEK — os_yearweek Rust UDF.
         ScalarFunction.LAST_DAY,
-        ScalarFunction.YEARWEEK
+        ScalarFunction.YEARWEEK,
+        // PoC (dialect=clickhouse): pass-through to DataFusion natives of the same shape
+        ScalarFunction.LPAD,
+        ScalarFunction.RPAD,
+        ScalarFunction.SUBSTRING_INDEX,
+        ScalarFunction.INITCAP,
+        ScalarFunction.REPEAT,
+        ScalarFunction.STARTS_WITH,
+        ScalarFunction.ENDS_WITH,
+        ScalarFunction.TRANSLATE3,
+        ScalarFunction.LEVENSHTEIN,
+        ScalarFunction.ARRAY_CONTAINS,
+        ScalarFunction.ARRAYS_OVERLAP,
+        ScalarFunction.ARRAY_POSITION,
+        ScalarFunction.ARRAY_MIN,
+        ScalarFunction.ARRAY_MAX
     );
 
     /**
@@ -447,7 +462,18 @@ public class DataFusionAnalyticsBackendPlugin implements AnalyticsSearchBackendP
         ScalarFunction.ITEM,
         ScalarFunction.SAFE_CAST,
         ScalarFunction.MVZIP,
-        ScalarFunction.MVAPPEND
+        ScalarFunction.MVAPPEND,
+        // PoC (dialect=clickhouse): array-returning pass-throughs
+        ScalarFunction.SPLIT,
+        ScalarFunction.ARRAY_REPEAT,
+        ScalarFunction.ARRAY_CONCAT,
+        ScalarFunction.ARRAY_APPEND,
+        ScalarFunction.ARRAY_PREPEND,
+        ScalarFunction.ARRAY_REVERSE,
+        ScalarFunction.SORT_ARRAY,
+        ScalarFunction.ARRAY_INTERSECT,
+        ScalarFunction.ARRAY_UNION,
+        ScalarFunction.ARRAY_REMOVE
     );
 
     /**
@@ -564,6 +590,10 @@ public class DataFusionAnalyticsBackendPlugin implements AnalyticsSearchBackendP
                             WindowFunction.RANK,
                             WindowFunction.DENSE_RANK,
                             WindowFunction.NTH_VALUE,
+                            WindowFunction.LAG,
+                            WindowFunction.LEAD,
+                            WindowFunction.FIRST_VALUE,
+                            WindowFunction.LAST_VALUE,
                             WindowFunction.PATTERN
                         ),
                         Set.copyOf(plugin.getSupportedFormats())
@@ -787,7 +817,7 @@ public class DataFusionAnalyticsBackendPlugin implements AnalyticsSearchBackendP
                     Map.entry(ScalarFunction.EXP, new NumericToDoubleAdapter(SqlStdOperatorTable.EXP)),
                     Map.entry(ScalarFunction.EXPM1, new Expm1Adapter()),
                     Map.entry(ScalarFunction.EXTRACT, new RustUdfDateTimeAdapters.ExtractAdapter()),
-                    Map.entry(ScalarFunction.FLOOR, new IntegerRoundingCastAdapter(SqlStdOperatorTable.FLOOR)),
+                    Map.entry(ScalarFunction.FLOOR, new FloorDatetimeAdapter()),
                     Map.entry(ScalarFunction.FROM_UNIXTIME, new RustUdfDateTimeAdapters.FromUnixtimeAdapter()),
                     Map.entry(ScalarFunction.HOUR, hour),
                     Map.entry(ScalarFunction.HOUR_OF_DAY, hour),

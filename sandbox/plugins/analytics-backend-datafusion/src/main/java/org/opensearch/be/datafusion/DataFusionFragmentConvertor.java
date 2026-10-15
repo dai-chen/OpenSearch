@@ -223,7 +223,31 @@ public class DataFusionFragmentConvertor implements FragmentConvertor {
         FunctionMappings.s(WidthBucketAdapter.LOCAL_WIDTH_BUCKET_OP, "width_bucket"),
         FunctionMappings.s(MinspanBucketAdapter.LOCAL_MINSPAN_BUCKET_OP, "minspan_bucket"),
         FunctionMappings.s(RangeBucketAdapter.LOCAL_RANGE_BUCKET_OP, "range_bucket"),
-        FunctionMappings.s(ConvAdapter.LOCAL_CONV_OP, "conv")
+        FunctionMappings.s(ConvAdapter.LOCAL_CONV_OP, "conv"),
+        // PoC (dialect=clickhouse): Calcite library operators → DataFusion natives (same arguments)
+        FunctionMappings.s(SqlLibraryOperators.LPAD, "lpad"),
+        FunctionMappings.s(SqlLibraryOperators.RPAD, "rpad"),
+        FunctionMappings.s(SqlLibraryOperators.SUBSTRING_INDEX, "substr_index"),
+        FunctionMappings.s(SqlStdOperatorTable.INITCAP, "initcap"),
+        FunctionMappings.s(SqlLibraryOperators.REPEAT, "repeat"),
+        FunctionMappings.s(SqlLibraryOperators.STARTS_WITH, "starts_with"),
+        FunctionMappings.s(SqlLibraryOperators.ENDS_WITH, "ends_with"),
+        FunctionMappings.s(SqlLibraryOperators.LEVENSHTEIN, "levenshtein"),
+        FunctionMappings.s(SqlLibraryOperators.SPLIT, "string_to_array"),
+        FunctionMappings.s(SqlLibraryOperators.ARRAY_REPEAT, "array_repeat"),
+        FunctionMappings.s(SqlLibraryOperators.ARRAY_CONTAINS, "array_has"),
+        FunctionMappings.s(SqlLibraryOperators.ARRAYS_OVERLAP, "array_has_any"),
+        FunctionMappings.s(SqlLibraryOperators.ARRAY_POSITION, "array_position"),
+        FunctionMappings.s(SqlLibraryOperators.ARRAY_CONCAT, "array_concat"),
+        FunctionMappings.s(SqlLibraryOperators.ARRAY_APPEND, "array_append"),
+        FunctionMappings.s(SqlLibraryOperators.ARRAY_PREPEND, "array_prepend"),
+        FunctionMappings.s(SqlLibraryOperators.ARRAY_REVERSE, "array_reverse"),
+        FunctionMappings.s(SqlLibraryOperators.SORT_ARRAY, "array_sort"),
+        FunctionMappings.s(SqlLibraryOperators.ARRAY_INTERSECT, "array_intersect"),
+        FunctionMappings.s(SqlLibraryOperators.ARRAY_UNION, "array_union"),
+        FunctionMappings.s(SqlLibraryOperators.ARRAY_REMOVE, "array_remove_all"),
+        FunctionMappings.s(SqlLibraryOperators.ARRAY_MIN, "array_min"),
+        FunctionMappings.s(SqlLibraryOperators.ARRAY_MAX, "array_max")
     );
 
     // TODO: extract these LOCAL_*_OP aggregate stubs (+ LocalAggOp and ADDITIONAL_AGGREGATE_SIGS)
